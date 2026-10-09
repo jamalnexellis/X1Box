@@ -40,6 +40,7 @@ jobs:
           rustup target add aarch64-linux-android --toolchain stable
       - name: Install Android toolchain
         run: |
+          printf 'y\n%.0s' {1..100} | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --channel=3 'platforms;android-36' 'build-tools;36.1.0' 'ndk;30.0.15729638' 'cmake;3.22.1'
       - name: Build installable diagnostic APK
         working-directory: android
