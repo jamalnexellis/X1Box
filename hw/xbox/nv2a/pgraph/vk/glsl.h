@@ -45,7 +45,7 @@ static inline void uniform_std140(ShaderUniformLayout *layout)
 {
 	size_t offset = 0;
 
-	for (int i = 0; i < layout->num_uniforms; i++) {
+	for (size_t i = 0; i < layout->num_uniforms; i++) {
 		ShaderUniform *u = &layout->uniforms[i];
 		size_t size = sizeof(float); // float or int
 		size_t align = size;
@@ -81,7 +81,7 @@ static inline void uniform_std430(ShaderUniformLayout *layout)
 {
 	size_t offset = 0;
 
-	for (int i = 0; i < layout->num_uniforms; i++) {
+	for (size_t i = 0; i < layout->num_uniforms; i++) {
 		ShaderUniform *u = &layout->uniforms[i];
 		size_t size = sizeof(float); // float or int
 		size *= u->dim_v;
@@ -103,7 +103,7 @@ static inline void uniform_std430(ShaderUniformLayout *layout)
 
 static inline int uniform_index(ShaderUniformLayout *layout, const char *name)
 {
-    for (int i = 0; i < layout->num_uniforms; i++) {
+    for (size_t i = 0; i < layout->num_uniforms; i++) {
         if (!strcmp(layout->uniforms[i].name, name)) {
             return i + 1;
         }
@@ -146,7 +146,7 @@ static inline void uniform_copy(ShaderUniformLayout *layout, int idx,
         return;
     }
 
-    int index = 0;
+    size_t index = 0;
     while (bytes_remaining) {
         assert((p_out + element_size) <= p_max);
         assert(index < u->dim_a);
