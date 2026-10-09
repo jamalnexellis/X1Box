@@ -45,7 +45,7 @@ static bool read_file(void *opaque, uint64_t offset, void *buffer, size_t length
 static void fixture(Image *image)
 {
     static const uint8_t pattern[] = {
-        0xe8, 0xca, 0xfd, 0xff, 0xff, 0x85, 0xc0, 0x7d, 0x09
+        0xe8, 0xca, 0xfd, 0xff, 0xff, 0x85, 0xc0, 0x7d, 0x05
     };
     uint8_t *header, *node, *xbe, *section;
     memset(image->data, 0, IMAGE_SIZE);
@@ -83,6 +83,11 @@ int main(int argc, char **argv)
     assert(image.data);
     fixture(&image);
     assert(xbox_xiso_media_find_patch(read_image, &image, IMAGE_SIZE) == PATCH_OFFSET);
+    /* The short branch displacement varies between XAPI versions; it is
+     * not part of extract-xiso's eight-byte media-enable signature. */
+    image.data[PATCH_OFFSET + 1] = 0x09;
+    assert(xbox_xiso_media_find_patch(read_image, &image, IMAGE_SIZE) == PATCH_OFFSET);
+    image.data[PATCH_OFFSET + 1] = 0x05;
     memcpy(buffer, image.data + PATCH_OFFSET - 1024, sizeof(buffer));
     memcpy(original, buffer, sizeof(buffer));
     xbox_xiso_media_apply(PATCH_OFFSET, PATCH_OFFSET - 1024, buffer, sizeof(buffer));
