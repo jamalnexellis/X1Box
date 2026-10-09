@@ -124,14 +124,27 @@ static inline void uniform_copy(ShaderUniformLayout *layout, int idx,
                                 void *values, size_t value_size, size_t count)
 {
     assert(idx > 0 && "invalid uniform index");
+    assert((size_t)idx <= layout->num_uniforms);
 
     ShaderUniform *u = &layout->uniforms[idx - 1];
     const size_t element_size = value_size * u->dim_v;
+    assert(element_size > 0);
+    assert(count % u->dim_v == 0);
+    assert(count / u->dim_v <= u->dim_a);
 
     size_t bytes_remaining = value_size * count;
     char *p_out = uniform_ptr(layout, idx);
-    char *p_max = p_out + layout->total_size;
+    char *p_max = (char *)layout->allocation + layout->total_size;
     char *p_in = (char *)values;
+
+    /* vec4 constant arrays and matrices have no inter-element padding. Copy
+     * those blocks once instead of calling memcpy for every vector. Keep the
+     * strided path for std140 scalar/vec2/vec3 arrays and leave padding alone. */
+    if (bytes_remaining <= element_size || u->stride == element_size) {
+        assert(p_out + bytes_remaining <= p_max);
+        memcpy(p_out, p_in, bytes_remaining);
+        return;
+    }
 
     int index = 0;
     while (bytes_remaining) {

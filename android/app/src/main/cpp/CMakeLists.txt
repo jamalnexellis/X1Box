@@ -1251,6 +1251,13 @@ add_executable(test-xiso-media EXCLUDE_FROM_ALL
 target_include_directories(test-xiso-media PRIVATE "${REPO_ROOT}/include")
 target_compile_options(test-xiso-media PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(test-uniform-copy EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-uniform-copy.c"
+)
+target_include_directories(test-uniform-copy PRIVATE
+  "${REPO_ROOT}" "${REPO_ROOT}/include")
+target_compile_options(test-uniform-copy PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_library(slirp_static STATIC
   ${LIBSLIRP_SOURCES}
 )

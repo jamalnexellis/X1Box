@@ -42,6 +42,10 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iinclude hw/xbox/xiso_media.c android/test/cpp/test-xiso-media.c -o /tmp/test-xiso-media
           /tmp/test-xiso-media
+      - name: Test Vulkan uniform packing
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I. -Iinclude android/test/cpp/test-uniform-copy.c -o /tmp/test-uniform-copy
+          /tmp/test-uniform-copy
       - name: Install native build tools
         run: |
           sudo apt-get update
@@ -61,7 +65,7 @@ jobs:
         run: |
           native_build=$(find android/app/.cxx -path '*/arm64-v8a/build.ninja' -print -quit)
           test -n "$native_build"
-          "$ANDROID_HOME/cmake/3.22.1/bin/cmake" --build "$(dirname "$native_build")" --target test-coroutine-android test-xiso-media --parallel 2
+          "$ANDROID_HOME/cmake/3.22.1/bin/cmake" --build "$(dirname "$native_build")" --target test-coroutine-android test-xiso-media test-uniform-copy --parallel 2
           mkdir -p android/app/build/outputs/native-tests
           native_test=$(find android/app -type f -name test-coroutine-android -print -quit)
           test -n "$native_test"
@@ -69,6 +73,9 @@ jobs:
           media_test=$(find android/app -type f -name test-xiso-media -print -quit)
           test -n "$media_test"
           cp "$media_test" android/app/build/outputs/native-tests/
+          uniform_test=$(find android/app -type f -name test-uniform-copy -print -quit)
+          test -n "$uniform_test"
+          cp "$uniform_test" android/app/build/outputs/native-tests/
       - name: Record APK checksum
         run: sha256sum android/app/build/outputs/apk/debug/app-debug.apk > android/app/build/outputs/apk/debug/SHA256SUMS.txt
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
@@ -80,4 +87,5 @@ jobs:
             android/app/build/outputs/apk/debug/SHA256SUMS.txt
             android/app/build/outputs/native-tests/test-coroutine-android
             android/app/build/outputs/native-tests/test-xiso-media
+            android/app/build/outputs/native-tests/test-uniform-copy
           compression-level: 0

@@ -64,29 +64,6 @@ static bool texture_shape_uses_blocks(PGRAPHVkState *r, TextureShape s)
            s.dimensionality == 2 && !s.border;
 }
 
-/* Inline transfers and sampling use the same queue. Their image barriers
- * order previous shader reads, the transfer, and subsequent shader reads,
- * including work in earlier submissions. Waiting for every frame fence on
- * the CPU serializes that queue unnecessarily. Keep a profiling override and
- * the legacy behavior on desktop/non-inline builds. */
-static bool texture_updates_need_idle(void)
-{
-#if defined(__ANDROID__) && OPT_SURF_TO_TEX_INLINE
-    static int wait = -1;
-    if (wait < 0) {
-        char property[PROP_VALUE_MAX] = {};
-        wait = __system_property_get("debug.xemu.vk.texture_waits", property) > 0 &&
-               property[0] == '1';
-        __android_log_print(ANDROID_LOG_INFO, "hakuX-vk",
-                            "texture updates: %s",
-                            wait ? "CPU fence waits" : "queue image barriers");
-    }
-    return wait;
-#else
-    return true;
-#endif
-}
-
 /* The image format actually used for a texture, which is the block format only
  * when the shape can be uploaded as blocks. */
 static VkColorFormatInfo texture_format_for_shape(PGRAPHVkState *r,
@@ -1900,17 +1877,10 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         bool did_upload = false;
         if (surface_to_texture) {
             if (surface->draw_time != snode->draw_time) {
-                bool can_direct_bind = can_bind_surface_direct(r, surface);
-                bool wait = texture_updates_need_idle() || !surface->color;
-#if OPT_BINDLESS_TEXTURES
-                /* Direct binding rewrites a shared descriptor on the host;
-                 * image barriers cannot synchronize that host mutation. */
-                wait |= can_direct_bind && r->bindless_textures_supported;
-#endif
-                if (wait &&
-                    snode->submit_time + r->num_active_frames > r->submit_count) {
+                if (snode->submit_time + r->num_active_frames > r->submit_count) {
                     pgraph_vk_flush_all_frames(pg);
                 }
+                bool can_direct_bind = can_bind_surface_direct(r, surface);
 
                 if (can_direct_bind) {
                     VkImageLayout direct_layout;
@@ -1961,8 +1931,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         } else {
             if (was_surface_copy ||
                 (possibly_dirty && content_hash != snode->hash)) {
-                if (texture_updates_need_idle() &&
-                    snode->submit_time + r->num_active_frames > r->submit_count) {
+                if (snode->submit_time + r->num_active_frames > r->submit_count) {
                     pgraph_vk_flush_all_frames(pg);
                 }
                 upload_texture_image(pg, texture_idx, snode);
