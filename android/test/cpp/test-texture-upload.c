@@ -3,6 +3,7 @@
  * upload kernel and barriers against exact RGBA bytes, including every mip,
  * non-multiple workgroups, nonzero staging offsets, and repeated writes. */
 #include <assert.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
