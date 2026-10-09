@@ -196,7 +196,7 @@ void ide_atapi_cmd_error(IDEState *s, int sense_key, int asc)
         if (errors_logged++ < 64) {
             __android_log_print(ANDROID_LOG_WARN, "xemu-boot",
                 "DVD error opcode=0x%02x lba=%d sense=0x%x asc=0x%x",
-                s->io_buffer[0], s->lba, sense_key, asc);
+                s->diagnostic_atapi_opcode, s->lba, sense_key, asc);
         }
     }
 #endif
@@ -1323,6 +1323,7 @@ void ide_atapi_cmd(IDEState *s)
     const struct AtapiCmd *cmd = &atapi_cmd_table[s->io_buffer[0]];
 
 #ifdef __ANDROID__
+    s->diagnostic_atapi_opcode = buf[0];
     if (xemu_android_is_debug_logging_enabled()) {
         static unsigned int commands_logged;
         unsigned int count = ++commands_logged;

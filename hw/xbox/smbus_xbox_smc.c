@@ -140,6 +140,12 @@ static int smc_write_data(SMBusDevice *dev, uint8_t *buf, uint8_t len)
         break;
 
     case SMC_REG_POWER:
+#ifdef __ANDROID__
+        if (xemu_android_is_debug_logging_enabled()) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-boot",
+                "SMC power request=0x%02x", buf[0]);
+        }
+#endif
         if (buf[0] & (SMC_REG_POWER_RESET | SMC_REG_POWER_CYCLE)) {
             qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
         } else if (buf[0] & SMC_REG_POWER_SHUTDOWN) {
@@ -160,6 +166,17 @@ static int smc_write_data(SMBusDevice *dev, uint8_t *buf, uint8_t len)
         break;
 
     case SMC_REG_SCRATCH:
+#ifdef __ANDROID__
+        if (xemu_android_is_debug_logging_enabled()) {
+            static unsigned int scratch_writes;
+            unsigned int count = ++scratch_writes;
+            if (count <= 20 || (count & (count - 1)) == 0) {
+                __android_log_print(ANDROID_LOG_INFO, "xemu-boot",
+                    "SMC scratch #%u old=0x%02x new=0x%02x",
+                    count, smc->scratch_reg, buf[0]);
+            }
+        }
+#endif
         if (buf[0] == 0x04) {
             chihiro_on_quickreboot_signal();
         }

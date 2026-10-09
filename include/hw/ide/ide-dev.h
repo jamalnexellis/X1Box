@@ -104,6 +104,9 @@ struct IDEState {
     int lba;
     int cd_sector_size;
     int atapi_dma; /* true if dma is requested for the packet cmd */
+#ifdef __ANDROID__
+    uint8_t diagnostic_atapi_opcode;
+#endif
     BlockAcctCookie acct;
     BlockAIOCB *pio_aiocb;
     QEMUIOVector qiov;
