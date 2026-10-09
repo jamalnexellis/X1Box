@@ -9,6 +9,10 @@ on:
       - android/**
       - hw/xbox/**
       - hw/ide/**
+      - include/hw/ide/**
+      - accel/tcg/**
+      - target/i386/**
+      - tcg/**
       - block/**
       - util/**
       - ui/**

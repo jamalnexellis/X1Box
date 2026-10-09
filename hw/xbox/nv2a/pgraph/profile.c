@@ -22,7 +22,7 @@
 #include <android/log.h>
 #endif
 
-#ifdef XBOX
+#if defined(XBOX) && (!defined(XEMU_OPT_TB_CACHE_HINTS) || XEMU_OPT_TB_CACHE_HINTS)
 extern uint64_t tb_cache_stats_lookup_hits;
 extern uint64_t tb_cache_stats_lookup_misses;
 #endif
@@ -146,7 +146,7 @@ static void snapshot_cpu_timing(void)
 
 #undef SMOOTH_CNT
 
-#ifdef XBOX
+#if defined(XBOX) && (!defined(XEMU_OPT_TB_CACHE_HINTS) || XEMU_OPT_TB_CACHE_HINTS)
     {
         uint64_t cur_hits   = tb_cache_stats_lookup_hits;
         uint64_t cur_misses = tb_cache_stats_lookup_misses;
