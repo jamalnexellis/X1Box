@@ -484,7 +484,8 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
 
     r->storage_buffers[BUFFER_STAGING_SRC] = (StorageBuffer){
         .alloc_info = host_alloc_create_info,
-        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         .buffer_size = staging_size,
     };
 
@@ -662,7 +663,8 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
         };
         fs->staging_src = (StorageBuffer){
             .alloc_info = host_alloc_create_info,
-            .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             .buffer_size = stg_cap,
         };
         fs->vertex_ram = (StorageBuffer){

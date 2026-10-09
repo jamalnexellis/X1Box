@@ -29,6 +29,8 @@
 #include "qemu/fast-hash.h"
 #include "qemu/lru.h"
 #include "renderer.h"
+#include "texture-upload.h"
+#include "qemu/timer.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -39,6 +41,186 @@ static void texture_cache_release_node_resources(PGRAPHVkState *r, TextureBindin
 static bool image_pool_acquire(PGRAPHVkState *r, const TextureImageConfig *config,
                                VkImage *out_image, VmaAllocation *out_allocation);
 static void image_pool_drain(PGRAPHVkState *r);
+
+static void texture_upload_compute_destroy(PGRAPHVkState *r)
+{
+    vkDestroyPipeline(r->device, r->texture_upload.pipeline, NULL);
+    vkDestroyPipelineLayout(r->device, r->texture_upload.layout, NULL);
+    vkDestroyDescriptorPool(r->device, r->texture_upload.pool, NULL);
+    vkDestroyDescriptorSetLayout(r->device, r->texture_upload.set_layout, NULL);
+    memset(&r->texture_upload, 0, sizeof(r->texture_upload));
+}
+
+static void texture_upload_compute_init(PGRAPHVkState *r)
+{
+    bool requested = false;
+#ifdef __ANDROID__
+    /* Limit the default to the device this path is measured and pixel-tested
+     * on. Other renderers keep the transfer path. */
+    requested = pgraph_vk_is_qualcomm_blob(r) &&
+                strstr(r->device_props.deviceName, "Adreno (TM) 830");
+    char prop[PROP_VALUE_MAX] = {};
+    if (__system_property_get("debug.xemu.vk.compute_upload", prop) > 0 &&
+        (prop[0] == '0' || prop[0] == '1')) {
+        requested = prop[0] == '1';
+    }
+#endif
+    VkFormatProperties props;
+    vkGetPhysicalDeviceFormatProperties(r->physical_device,
+                                        VK_FORMAT_R8G8B8A8_UNORM, &props);
+    if (!requested ||
+        !(props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) {
+        return;
+    }
+    uint32_t family_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(r->physical_device,
+                                             &family_count, NULL);
+    g_autofree VkQueueFamilyProperties *families =
+        g_new(VkQueueFamilyProperties, family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(r->physical_device,
+                                             &family_count, families);
+    QueueFamilyIndices indices = pgraph_vk_find_queue_families(r->physical_device);
+    if (indices.queue_family < 0 ||
+        !(families[indices.queue_family].queueFlags & VK_QUEUE_COMPUTE_BIT) ||
+        get_staging_buffer(r, BUFFER_STAGING_SRC)->buffer_size >
+            r->device_props.limits.maxStorageBufferRange) {
+        return;
+    }
+
+    g_autofree VkDescriptorSetLayout *layouts = NULL;
+    VkDescriptorSetLayoutBinding bindings[] = {
+        { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT },
+        { .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT },
+    };
+    VkDescriptorSetLayoutCreateInfo set_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = ARRAY_SIZE(bindings), .pBindings = bindings,
+    };
+    if (vkCreateDescriptorSetLayout(r->device, &set_info, NULL,
+                                     &r->texture_upload.set_layout) != VK_SUCCESS) {
+        goto fail;
+    }
+    VkPushConstantRange push = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 12 };
+    VkPipelineLayoutCreateInfo layout_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1, .pSetLayouts = &r->texture_upload.set_layout,
+        .pushConstantRangeCount = 1, .pPushConstantRanges = &push,
+    };
+    if (vkCreatePipelineLayout(r->device, &layout_info, NULL,
+                                &r->texture_upload.layout) != VK_SUCCESS) {
+        goto fail;
+    }
+    ShaderModuleInfo *module = pgraph_vk_create_shader_module_from_glsl(
+        r, VK_SHADER_STAGE_COMPUTE_BIT, texture_upload_glsl);
+    if (!module) {
+        goto fail;
+    }
+    VkComputePipelineCreateInfo pipeline_info = {
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .layout = r->texture_upload.layout,
+        .stage = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                   .stage = VK_SHADER_STAGE_COMPUTE_BIT, .pName = "main",
+                   .module = module->module },
+    };
+    VkResult result = vkCreateComputePipelines(r->device, r->vk_pipeline_cache,
+        1, &pipeline_info, NULL, &r->texture_upload.pipeline);
+    pgraph_vk_destroy_shader_module(r, module);
+    if (result != VK_SUCCESS) {
+        goto fail;
+    }
+    uint32_t count = ARRAY_SIZE(r->texture_upload.sets);
+    VkDescriptorPoolSize sizes[] = {
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, count },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, count },
+    };
+    VkDescriptorPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = count, .poolSizeCount = ARRAY_SIZE(sizes), .pPoolSizes = sizes,
+    };
+    if (vkCreateDescriptorPool(r->device, &pool_info, NULL,
+                                &r->texture_upload.pool) != VK_SUCCESS) {
+        goto fail;
+    }
+    layouts = g_new(VkDescriptorSetLayout, count);
+    for (uint32_t i = 0; i < count; i++) {
+        layouts[i] = r->texture_upload.set_layout;
+    }
+    VkDescriptorSetAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = r->texture_upload.pool,
+        .descriptorSetCount = count, .pSetLayouts = layouts,
+    };
+    if (vkAllocateDescriptorSets(r->device, &alloc_info,
+                                  r->texture_upload.sets) != VK_SUCCESS) {
+        goto fail;
+    }
+    r->texture_upload.enabled = true;
+    VK_LOG_ERROR("RGBA8 compute upload enabled on %s", r->device_props.deviceName);
+    return;
+fail:
+    VK_LOG_ERROR("RGBA8 compute upload unavailable; using buffer/image copies");
+    texture_upload_compute_destroy(r);
+}
+
+static bool texture_can_compute_upload(PGRAPHVkState *r, TextureShape state,
+                                        VkFormat format)
+{
+    return r->texture_upload.enabled && format == VK_FORMAT_R8G8B8A8_UNORM &&
+           state.dimensionality == 2 && !state.cubemap && !state.border &&
+           state.levels <= ARRAY_SIZE(((TextureBinding *)0)->upload_views);
+}
+
+static void texture_compute_upload(PGRAPHVkState *r, TextureBinding *binding,
+                                    StorageBuffer *staging, VkCommandBuffer cmd,
+                                    const VkBufferImageCopy *regions, int count)
+{
+    texture_upload_image_barrier(cmd, binding->image, count,
+        binding->current_layout, VK_IMAGE_LAYOUT_GENERAL,
+        binding->current_layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 :
+            VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                       r->texture_upload.pipeline);
+    for (int i = 0; i < count; i++) {
+        if (!binding->upload_views[i]) {
+            VkImageViewCreateInfo view_info = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = binding->image, .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = VK_FORMAT_R8G8B8A8_UNORM,
+                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, i, 1, 0, 1 },
+            };
+            VK_CHECK(vkCreateImageView(r->device, &view_info, NULL,
+                                       &binding->upload_views[i]));
+        }
+        VkDescriptorSet set = r->texture_upload.sets[r->texture_upload.set_index++];
+        VkDescriptorBufferInfo buffer_info = { staging->buffer, 0, staging->buffer_size };
+        VkDescriptorImageInfo image_info = {
+            .imageView = binding->upload_views[i], .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+        };
+        VkWriteDescriptorSet writes[] = {
+            { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set,
+              .dstBinding = 0, .descriptorCount = 1,
+              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+              .pBufferInfo = &buffer_info },
+            { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set,
+              .dstBinding = 1, .descriptorCount = 1,
+              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+              .pImageInfo = &image_info },
+        };
+        vkUpdateDescriptorSets(r->device, ARRAY_SIZE(writes), writes, 0, NULL);
+        texture_upload_dispatch(cmd, r->texture_upload.layout, set,
+            regions[i].bufferOffset, regions[i].imageExtent.width,
+            regions[i].imageExtent.height);
+    }
+    texture_upload_image_barrier(cmd, binding->image, count,
+        VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    binding->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
 
 /* Xbox DXT1/3/5 blocks are bit-identical to Vulkan BC1/BC2/BC3. Where the
  * device can sample those formats we hand the blocks straight to the driver
@@ -728,6 +910,14 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
         }
     }
     const int num_layers = state->cubemap ? 6 : 1;
+    bool compute_upload = texture_can_compute_upload(r, *state, vkf.vk_format);
+    if (compute_upload && r->texture_upload.set_index + state->levels >
+            ARRAY_SIZE(r->texture_upload.sets)) {
+        /* Submit recorded work before recycling descriptors. This must happen
+         * before staging allocation, since finish can rotate the frame slot. */
+        pgraph_vk_finish(pg, VK_FINISH_REASON_NEED_BUFFER_SPACE);
+        pgraph_vk_flush_all_frames(pg);
+    }
 
     // Calculate decoded texture data size
     size_t texture_data_size = 0;
@@ -800,7 +990,8 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
     VkBufferMemoryBarrier host_barrier = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
         .srcAccessMask = VK_ACCESS_HOST_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .dstAccessMask = compute_upload ? VK_ACCESS_SHADER_READ_BIT :
+                                         VK_ACCESS_TRANSFER_READ_BIT,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .buffer = staging->buffer,
@@ -808,9 +999,15 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
         .size = buffer_offset - staging_base
     };
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 1,
+                         compute_upload ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT :
+                                          VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, NULL, 1,
                          &host_barrier, 0, NULL);
 
+    int64_t copy_start = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+    if (compute_upload) {
+        texture_compute_upload(r, binding, staging, cmd, regions, num_regions);
+    } else {
     pgraph_vk_transition_image_layout(pg, cmd, binding->image, vkf.vk_format,
                                       binding->current_layout,
                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -824,6 +1021,26 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
                                       binding->current_layout,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     binding->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+
+#if defined(__ANDROID__) && NV2A_PERF_LOG
+    static uint64_t copies[2], bytes[2], copy_ns[2], max_ns[2];
+    int path = compute_upload ? 1 : 0;
+    uint64_t elapsed = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - copy_start;
+    copies[path]++;
+    bytes[path] += texture_data_size;
+    copy_ns[path] += elapsed;
+    max_ns[path] = MAX(max_ns[path], elapsed);
+    if ((copies[0] + copies[1]) % 64 == 0) {
+        __android_log_print(ANDROID_LOG_INFO, "xemu-upload",
+            "transfer=%" PRIu64 " %.1fMB %.2fms max=%.2fms; "
+            "compute=%" PRIu64 " %.1fMB %.2fms max=%.2fms",
+            copies[0], bytes[0] / 1048576.0, copy_ns[0] / 1e6, max_ns[0] / 1e6,
+            copies[1], bytes[1] / 1048576.0, copy_ns[1] / 1e6, max_ns[1] / 1e6);
+    }
+#else
+    (void)copy_start;
+#endif
 
 
     nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT_4);
@@ -1981,6 +2198,9 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         pgraph_apply_scaling_factor(pg, &image_create_info.extent.width,
                                         &image_create_info.extent.height);
     }
+    if (texture_can_compute_upload(r, state, vkf.vk_format)) {
+        image_create_info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+    }
 
     TextureImageConfig pool_cfg = {
         .format = image_create_info.format,
@@ -1991,6 +2211,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         .mip_levels = image_create_info.mipLevels,
         .array_layers = image_create_info.arrayLayers,
         .flags = image_create_info.flags,
+        .usage = image_create_info.usage,
     };
     snode->image_config = pool_cfg;
 
@@ -2449,6 +2670,7 @@ static void texture_cache_entry_init(Lru *lru, LruNode *node, const void *state)
     snode->allocation = VK_NULL_HANDLE;
     snode->image_view = VK_NULL_HANDLE;
     snode->sampler = VK_NULL_HANDLE;
+    memset(snode->upload_views, 0, sizeof(snode->upload_views));
     snode->submit_time = 0;
     snode->dirty_check_frame = 0;
     snode->dirty_check_result = false;
@@ -2484,6 +2706,7 @@ static bool image_pool_config_match(const TextureImageConfig *a,
                                     const TextureImageConfig *b)
 {
     return a->format == b->format &&
+           a->usage == b->usage &&
            a->image_type == b->image_type &&
            a->width == b->width &&
            a->height == b->height &&
@@ -2553,6 +2776,10 @@ static void texture_cache_release_node_resources(PGRAPHVkState *r, TextureBindin
 
     vkDestroyImageView(r->device, snode->image_view, NULL);
     snode->image_view = VK_NULL_HANDLE;
+    for (size_t i = 0; i < ARRAY_SIZE(snode->upload_views); i++) {
+        vkDestroyImageView(r->device, snode->upload_views[i], NULL);
+        snode->upload_views[i] = VK_NULL_HANDLE;
+    }
 
     if (snode->image != VK_NULL_HANDLE) {
         image_pool_release(r, &snode->image_config, snode->image,
@@ -2857,6 +3084,7 @@ void pgraph_vk_init_textures(PGRAPHState *pg)
 
     texture_cache_init(r);
     init_texture_format_map(r);
+    texture_upload_compute_init(r);
     create_dummy_texture(pg);
 
 #ifdef __ANDROID__
@@ -2890,6 +3118,7 @@ void pgraph_vk_finalize_textures(PGRAPHState *pg)
 
     destroy_dummy_texture(r);
     texture_cache_finalize(r);
+    texture_upload_compute_destroy(r);
 
     assert(r->texture_cache.num_used == 0);
 

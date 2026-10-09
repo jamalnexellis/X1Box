@@ -49,7 +49,7 @@ jobs:
       - name: Install native build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config
+          sudo apt-get install -y meson ninja-build pkg-config glslang-tools
           rustup target add aarch64-linux-android --toolchain stable
       - name: Install Android toolchain
         run: |
@@ -65,7 +65,7 @@ jobs:
         run: |
           native_build=$(find android/app/.cxx -path '*/arm64-v8a/build.ninja' -print -quit)
           test -n "$native_build"
-          "$ANDROID_HOME/cmake/3.22.1/bin/cmake" --build "$(dirname "$native_build")" --target test-coroutine-android test-xiso-media test-uniform-copy --parallel 2
+          "$ANDROID_HOME/cmake/3.22.1/bin/cmake" --build "$(dirname "$native_build")" --target test-coroutine-android test-xiso-media test-uniform-copy test-texture-upload --parallel 2
           mkdir -p android/app/build/outputs/native-tests
           native_test=$(find android/app -type f -name test-coroutine-android -print -quit)
           test -n "$native_test"
@@ -76,6 +76,16 @@ jobs:
           uniform_test=$(find android/app -type f -name test-uniform-copy -print -quit)
           test -n "$uniform_test"
           cp "$uniform_test" android/app/build/outputs/native-tests/
+          upload_test=$(find android/app -type f -name test-texture-upload -print -quit)
+          test -n "$upload_test"
+          cp "$upload_test" android/app/build/outputs/native-tests/
+          python3 - <<'PY'
+          import ast, pathlib, re
+          header = pathlib.Path('hw/xbox/nv2a/pgraph/vk/texture-upload.h').read_text().split('static inline')[0]
+          shader = ''.join(ast.literal_eval(s) for s in re.findall(r'"(?:[^"\\]|\\.)*"', header))
+          pathlib.Path('/tmp/texture-upload.comp').write_text(shader)
+          PY
+          glslangValidator -V /tmp/texture-upload.comp -o android/app/build/outputs/native-tests/texture-upload.spv
       - name: Record APK checksum
         run: sha256sum android/app/build/outputs/apk/debug/app-debug.apk > android/app/build/outputs/apk/debug/SHA256SUMS.txt
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
@@ -88,4 +98,6 @@ jobs:
             android/app/build/outputs/native-tests/test-coroutine-android
             android/app/build/outputs/native-tests/test-xiso-media
             android/app/build/outputs/native-tests/test-uniform-copy
+            android/app/build/outputs/native-tests/test-texture-upload
+            android/app/build/outputs/native-tests/texture-upload.spv
           compression-level: 0

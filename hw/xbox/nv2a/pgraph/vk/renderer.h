@@ -699,6 +699,7 @@ typedef struct TextureImageConfig {
     uint32_t mip_levels;
     uint32_t array_layers;
     VkImageCreateFlags flags;
+    VkImageUsageFlags usage;
 } TextureImageConfig;
 
 typedef struct PooledImage {
@@ -736,6 +737,8 @@ typedef struct TextureBinding {
     VkImageView image_view;
     VmaAllocation allocation;
     VkSampler sampler;
+    /* Identity storage views, one per mip, used only for RGBA8 compute uploads. */
+    VkImageView upload_views[16];
     bool possibly_dirty;
     uint64_t hash;
     unsigned int draw_time;
@@ -1433,6 +1436,15 @@ typedef struct PGRAPHVkState {
 
     PGRAPHVkDisplayState display;
     PGRAPHVkComputeState compute;
+    struct {
+        bool enabled;
+        VkPipeline pipeline;
+        VkPipelineLayout layout;
+        VkDescriptorSetLayout set_layout;
+        VkDescriptorPool pool;
+        VkDescriptorSet sets[4096];
+        unsigned int set_index;
+    } texture_upload;
 
 #if OPT_ASYNC_COMPILE
     struct {
