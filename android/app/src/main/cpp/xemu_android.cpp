@@ -58,9 +58,13 @@ extern "C" void xemu_android_request_exit(void);
 extern "C" void xemu_android_set_qemu_thread_finished(bool finished);
 extern "C" void xemu_android_set_display_mode_setting(int mode);
 
+static std::atomic<bool> g_debug_logging_enabled{false};
+
+extern "C" void xemu_android_boot_diagnostics_start(void);
+
 extern "C" bool xemu_android_is_debug_logging_enabled(void)
 {
-    return false; // TODO: wire to settings toggle
+    return g_debug_logging_enabled.load(std::memory_order_relaxed);
 }
 
 /* Stub: old GL display readback — replaced by texture-based path in new GL display.c.
@@ -913,6 +917,9 @@ static SetupFiles SyncSetupFiles() {
   const std::string flashUri = GetPrefString(env, activity, "flashUri");
   const std::string hddUri = GetPrefString(env, activity, "hddUri");
   const std::string dvdUri = GetPrefString(env, activity, "dvdUri");
+  g_debug_logging_enabled.store(
+      GetPrefBool(env, activity, "setting_debug_logs_enabled", false),
+      std::memory_order_relaxed);
 
   LogInfoFmt("Prefs mcpxPath=%s", mcpxPath.c_str());
   LogInfoFmt("Prefs flashPath=%s", flashPath.c_str());
@@ -1379,6 +1386,7 @@ extern "C" int xemu_android_main(int argc, char** argv) {
   LogInfo("xemu_android_main: qemu_init");
   auto t_init_start = SDL_GetTicks();
   qemu_init(argc, argv);
+  xemu_android_boot_diagnostics_start();
   auto t_init_end = SDL_GetTicks();
   __android_log_print(ANDROID_LOG_INFO, "xemu-android",
                       "qemu_init took %llu ms",

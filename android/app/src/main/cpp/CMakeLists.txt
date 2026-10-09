@@ -1028,6 +1028,7 @@ endif()
 
 add_library(xemu_core STATIC
   ${XEMU_CORE_SOURCES}
+  xemu_boot_diagnostics.c
   coroutine-android.c
   coroutine-android-aarch64.S
 )

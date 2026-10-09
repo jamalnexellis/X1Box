@@ -40,6 +40,11 @@
 #include "hw/qdev-properties.h"
 #include "block/block_int-io.h"
 
+#ifdef __ANDROID__
+#include <android/log.h>
+extern bool xemu_android_is_debug_logging_enabled(void);
+#endif
+
 #define TYPE_XBOX_SMC "smbus-xbox-smc"
 #define XBOX_SMC(obj) OBJECT_CHECK(SMBusSMCDevice, (obj), TYPE_XBOX_SMC)
 
@@ -143,6 +148,14 @@ static int smc_write_data(SMBusDevice *dev, uint8_t *buf, uint8_t len)
         break;
 
     case SMC_REG_ERROR_WRITE:
+#ifdef __ANDROID__
+        if (buf[0] && buf[0] != smc->error_reg &&
+            xemu_android_is_debug_logging_enabled()) {
+            __android_log_print(ANDROID_LOG_WARN, "xemu-boot",
+                "Xbox boot error reported by SMC: %u (0x%02x)",
+                buf[0], buf[0]);
+        }
+#endif
         smc->error_reg = buf[0];
         break;
 

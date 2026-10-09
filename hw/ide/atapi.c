@@ -31,6 +31,11 @@
 #include "ide-internal.h"
 #include "trace.h"
 
+#ifdef __ANDROID__
+#include <android/log.h>
+extern bool xemu_android_is_debug_logging_enabled(void);
+#endif
+
 #define ATAPI_SECTOR_BITS (2 + BDRV_SECTOR_BITS)
 #define ATAPI_SECTOR_SIZE (1 << ATAPI_SECTOR_BITS)
 
@@ -185,6 +190,16 @@ void ide_atapi_cmd_ok(IDEState *s)
 
 void ide_atapi_cmd_error(IDEState *s, int sense_key, int asc)
 {
+#ifdef __ANDROID__
+    if (xemu_android_is_debug_logging_enabled()) {
+        static unsigned int errors_logged;
+        if (errors_logged++ < 64) {
+            __android_log_print(ANDROID_LOG_WARN, "xemu-boot",
+                "DVD error opcode=0x%02x lba=%d sense=0x%x asc=0x%x",
+                s->io_buffer[0], s->lba, sense_key, asc);
+        }
+    }
+#endif
     trace_ide_atapi_cmd_error(s, sense_key, asc);
     s->error = sense_key << 4;
     s->status = READY_STAT | ERR_STAT;
@@ -1306,6 +1321,18 @@ void ide_atapi_cmd(IDEState *s)
 {
     uint8_t *buf = s->io_buffer;
     const struct AtapiCmd *cmd = &atapi_cmd_table[s->io_buffer[0]];
+
+#ifdef __ANDROID__
+    if (xemu_android_is_debug_logging_enabled()) {
+        static unsigned int commands_logged;
+        unsigned int count = ++commands_logged;
+        if (count <= 20 || (count & (count - 1)) == 0) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-boot",
+                "DVD command #%u opcode=0x%02x inserted=%d tray_open=%d",
+                count, buf[0], blk_is_inserted(s->blk), s->tray_open);
+        }
+    }
+#endif
 
     trace_ide_atapi_cmd(s, s->io_buffer[0]);
 
