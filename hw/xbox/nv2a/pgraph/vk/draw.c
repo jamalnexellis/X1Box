@@ -6408,8 +6408,13 @@ void pgraph_vk_flush_draw(NV2AState *d)
     r->num_vertex_ram_buffer_syncs = 0;
 
 #ifndef NDEBUG
-    RenderCommandSnapshot snap;
-    pgraph_vk_snapshot_state(pg, &snap);
+    /* These assertions inspect four values. Copying the entire register,
+     * shader and lighting state for every draw dominated snapshot time on
+     * Android; capture exactly what the invariant checks use. */
+    const unsigned int checked_primitive_mode = pg->primitive_mode;
+    const bool checked_clearing = pg->clearing;
+    const uint32_t checked_control_0 = pgraph_vk_reg_r(pg, NV_PGRAPH_CONTROL_0);
+    const uint32_t checked_setup_raster = pgraph_vk_reg_r(pg, NV_PGRAPH_SETUPRASTER);
 #endif
 
     PrimAssemblyState assembly = {
@@ -6774,11 +6779,11 @@ inline_array_done:
     }
 
 #ifndef NDEBUG
-    assert(snap.primitive_mode == pg->primitive_mode);
-    assert(snap.clearing == pg->clearing);
-    assert(snapshot_reg_r(&snap, NV_PGRAPH_CONTROL_0) ==
+    assert(checked_primitive_mode == pg->primitive_mode);
+    assert(checked_clearing == pg->clearing);
+    assert(checked_control_0 ==
            pgraph_vk_reg_r(pg, NV_PGRAPH_CONTROL_0));
-    assert(snapshot_reg_r(&snap, NV_PGRAPH_SETUPRASTER) ==
+    assert(checked_setup_raster ==
            pgraph_vk_reg_r(pg, NV_PGRAPH_SETUPRASTER));
 #endif
 
