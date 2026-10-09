@@ -43,6 +43,7 @@ jobs:
           printf 'y\n%.0s' {1..100} | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --channel=3 'platforms;android-36' 'build-tools;36.1.0' 'ndk;30.0.15729638' 'cmake;3.22.1'
       - name: Build installable diagnostic APK
+        id: build
         working-directory: android
         run: |
           chmod +x gradlew
@@ -53,11 +54,13 @@ jobs:
           test -n "$native_build"
           "$ANDROID_HOME/cmake/3.22.1/bin/cmake" --build "$(dirname "$native_build")" --target test-coroutine-android --parallel 2
           mkdir -p android/app/build/outputs/native-tests
-          cp "$(dirname "$native_build")/test-coroutine-android" android/app/build/outputs/native-tests/
+          native_test=$(find android/app -type f -name test-coroutine-android -print -quit)
+          test -n "$native_test"
+          cp "$native_test" android/app/build/outputs/native-tests/
       - name: Record APK checksum
         run: sha256sum android/app/build/outputs/apk/debug/app-debug.apk > android/app/build/outputs/apk/debug/SHA256SUMS.txt
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        if: success()
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         with:
           name: x1box-pgr2-diagnostic-${{ github.sha }}
           path: |

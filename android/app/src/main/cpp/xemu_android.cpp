@@ -248,7 +248,9 @@ static void LogQcow2Info(const std::string& path) {
 }
 
 static bool IsTcgTuningEnabled() {
-  const char* value = SDL_getenv("XEMU_ANDROID_TCG_TUNING");
+  // Preferences are applied with setenv() after SDL initializes its cached
+  // environment. Startup options must read the live process environment.
+  const char* value = getenv("XEMU_ANDROID_TCG_TUNING");
   return !(value && value[0] == '0');
 }
 
@@ -330,7 +332,7 @@ static void LoadGameControllerMappingsFromAssets() {
 }
 
 static const char* GetTcgThreadFromEnv() {
-  const char* value = SDL_getenv("XEMU_ANDROID_TCG_THREAD");
+  const char* value = getenv("XEMU_ANDROID_TCG_THREAD");
   if (value && strcmp(value, "single") == 0) {
     return "single";
   }
@@ -342,7 +344,7 @@ static int GetTcgTbSizeFromEnv() {
   constexpr int kMaxTbSize = 512;
   const int defaultTbSize = IsLowMemoryDevice() ? 128 : 256;
 
-  const char* value = SDL_getenv("XEMU_ANDROID_TCG_TB_SIZE");
+  const char* value = getenv("XEMU_ANDROID_TCG_TB_SIZE");
   if (!value || value[0] == '\0') {
     return defaultTbSize;
   }
@@ -470,7 +472,7 @@ static bool HasInlineAioCrashFlag(const std::string& flag_path) {
 }
 
 static bool ShouldEnableInlineAioWorkaround(const std::string& crash_flag_path) {
-  const char* forced = SDL_getenv("XEMU_ANDROID_INLINE_AIO");
+  const char* forced = getenv("XEMU_ANDROID_INLINE_AIO");
   if (forced) {
     return forced[0] != '\0' && forced[0] != '0';
   }
@@ -1502,7 +1504,7 @@ extern "C" int SDL_main(int argc, char* argv[]) {
                                  ? nullptr
                                  : setup.session_marker_path.c_str());
 
-  if (!SDL_getenv("XEMU_ANDROID_INLINE_AIO")) {
+  if (!getenv("XEMU_ANDROID_INLINE_AIO")) {
     const bool use_inline_aio =
         ShouldEnableInlineAioWorkaround(setup.inline_aio_flag_path);
     setenv("XEMU_ANDROID_INLINE_AIO", use_inline_aio ? "1" : "0", 1);
@@ -1563,7 +1565,7 @@ extern "C" int SDL_main(int argc, char* argv[]) {
 
     // Apply the early renderer selection from activity prefs/runtime overrides.
     {
-      const char *renderer_pref = SDL_getenv("XEMU_RENDERER");
+      const char *renderer_pref = getenv("XEMU_RENDERER");
       if (renderer_pref && strcmp(renderer_pref, "opengl") == 0) {
         g_config.display.renderer = CONFIG_DISPLAY_RENDERER_OPENGL;
         LogInfo("Renderer override: OpenGL ES");

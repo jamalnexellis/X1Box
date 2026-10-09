@@ -1,7 +1,7 @@
 # PGR 2 startup investigation
 
 Base: official X1 BOX tag `1.2.9` (`dadced00cea8bcbada5a5650541cc5bac3cc93f4`).
-Test build: `1.2.9-pgr2-diag1`, application ID `com.izzy2lost.x1box.dev`.
+Test build: `1.2.9-pgr2-test1`, application ID `com.izzy2lost.x1box.dev`.
 
 ## Evidence from the three supplied logs
 
@@ -16,6 +16,16 @@ Test build: `1.2.9-pgr2-diag1`, application ID `com.izzy2lost.x1box.dev`.
 
 These logs do not identify the guest instruction or DVD command at which
 startup stops, so they do not yet establish a PGR 2 fix.
+
+## Confirmed configuration defect
+
+The connected SM-S938B has `android.tcg_thread = 'single'`, but the release
+launches with `tcg,thread=multi,tb-size=256`. The native configuration loader
+uses POSIX `setenv()` after SDL initializes. SDL 3's `SDL_getenv()` reads its
+cached environment and therefore misses these changes. Startup option readers
+now use the same live process environment as the configuration writer.
+This also preserves explicit inline-AIO and renderer environment overrides.
+PGR 2 must still be tested to determine whether this fixes its startup failure.
 
 ## Diagnostic changes
 
