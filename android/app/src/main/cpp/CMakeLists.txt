@@ -1029,6 +1029,7 @@ endif()
 add_library(xemu_core STATIC
   ${XEMU_CORE_SOURCES}
   xemu_boot_diagnostics.c
+  "${REPO_ROOT}/hw/xbox/xiso_media.c"
   coroutine-android.c
   coroutine-android-aarch64.S
 )
@@ -1242,6 +1243,13 @@ target_compile_definitions(test-coroutine-android PRIVATE
 target_compile_options(test-coroutine-android PRIVATE -UNDEBUG)
 target_link_libraries(test-coroutine-android PRIVATE glib-2.0 log android)
 add_dependencies(test-coroutine-android glib_ep)
+
+add_executable(test-xiso-media EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-xiso-media.c"
+  "${REPO_ROOT}/hw/xbox/xiso_media.c"
+)
+target_include_directories(test-xiso-media PRIVATE "${REPO_ROOT}/include")
+target_compile_options(test-xiso-media PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
 add_library(slirp_static STATIC
   ${LIBSLIRP_SOURCES}

@@ -106,6 +106,8 @@ struct IDEState {
     int atapi_dma; /* true if dma is requested for the packet cmd */
 #ifdef __ANDROID__
     uint8_t diagnostic_atapi_opcode;
+    bool xiso_media_checked;
+    int64_t xiso_media_patch_offset;
 #endif
     BlockAcctCookie acct;
     BlockAIOCB *pio_aiocb;

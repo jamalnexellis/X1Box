@@ -31,13 +31,29 @@
 #include "ide-internal.h"
 #include "trace.h"
 
+#define ATAPI_SECTOR_BITS (2 + BDRV_SECTOR_BITS)
+#define ATAPI_SECTOR_SIZE (1 << ATAPI_SECTOR_BITS)
+
 #ifdef __ANDROID__
 #include <android/log.h>
+#include "hw/xbox/xiso_media.h"
 extern bool xemu_android_is_debug_logging_enabled(void);
 #endif
 
-#define ATAPI_SECTOR_BITS (2 + BDRV_SECTOR_BITS)
-#define ATAPI_SECTOR_SIZE (1 << ATAPI_SECTOR_BITS)
+#ifdef __ANDROID__
+static bool xiso_media_read(void *opaque, uint64_t offset,
+                           void *buffer, size_t length)
+{
+    return blk_pread(opaque, offset, length, buffer, 0) >= 0;
+}
+
+static void xiso_media_patch_read(IDEState *s, size_t length)
+{
+    uint8_t *data = s->io_buffer + (s->cd_sector_size == 2352 ? 16 : 0);
+    xbox_xiso_media_apply(s->xiso_media_patch_offset,
+                         (uint64_t)s->lba * ATAPI_SECTOR_SIZE, data, length);
+}
+#endif
 
 static void ide_atapi_cmd_read_dma_cb(void *opaque, int ret);
 
@@ -122,6 +138,9 @@ cd_read_sector_sync(IDEState *s)
     if (ret < 0) {
         block_acct_failed(blk_get_stats(s->blk), &s->acct);
     } else {
+#ifdef __ANDROID__
+        xiso_media_patch_read(s, ATAPI_SECTOR_SIZE);
+#endif
         block_acct_done(blk_get_stats(s->blk), &s->acct);
         s->lba++;
         s->io_buffer_index = 0;
@@ -143,6 +162,10 @@ static void cd_read_sector_cb(void *opaque, int ret)
     }
 
     block_acct_done(blk_get_stats(s->blk), &s->acct);
+
+#ifdef __ANDROID__
+    xiso_media_patch_read(s, ATAPI_SECTOR_SIZE);
+#endif
 
     if (s->cd_sector_size == 2352) {
         cd_data_to_raw(s->io_buffer, s->lba);
@@ -384,6 +407,10 @@ static void ide_atapi_cmd_read_dma_cb(void *opaque, int ret)
          * the reply data.
          */
         if (s->lba != -1) {
+#ifdef __ANDROID__
+            xiso_media_patch_read(s, s->cd_sector_size == 2352 ?
+                                 ATAPI_SECTOR_SIZE : s->io_buffer_size);
+#endif
             if (s->cd_sector_size == 2352) {
                 n = 1;
                 cd_data_to_raw(s->io_buffer, s->lba);
@@ -457,6 +484,19 @@ static void ide_atapi_cmd_read_dma(IDEState *s, int lba, int nb_sectors,
 static void ide_atapi_cmd_read(IDEState *s, int lba, int nb_sectors,
                                int sector_size)
 {
+#ifdef __ANDROID__
+    if (!s->xiso_media_checked) {
+        int64_t image_size = blk_getlength(s->blk);
+        s->xiso_media_checked = true;
+        s->xiso_media_patch_offset = image_size > 0 ?
+            xbox_xiso_media_find_patch(xiso_media_read, s->blk, image_size) : -1;
+        if (s->xiso_media_patch_offset >= 0) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-boot",
+                "PGR 2 XISO media compatibility enabled at disc offset=0x%" PRIx64
+                " (read buffers only)", (uint64_t)s->xiso_media_patch_offset);
+        }
+    }
+#endif
     trace_ide_atapi_cmd_read(s, s->atapi_dma ? "dma" : "pio",
                              lba, nb_sectors);
     if (s->atapi_dma) {

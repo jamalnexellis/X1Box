@@ -1218,6 +1218,10 @@ static void ide_cd_change_cb(void *opaque, bool load, Error **errp)
     uint64_t nb_sectors;
 
     s->tray_open = !load;
+#ifdef __ANDROID__
+    s->xiso_media_checked = false;
+    s->xiso_media_patch_offset = -1;
+#endif
     blk_get_geometry(s->blk, &nb_sectors);
     s->nb_sectors = nb_sectors;
 
@@ -1415,6 +1419,10 @@ static void ide_reset(IDEState *s)
     s->io_buffer_index = 0;
     s->cd_sector_size = 0;
     s->atapi_dma = 0;
+#ifdef __ANDROID__
+    s->xiso_media_checked = false;
+    s->xiso_media_patch_offset = -1;
+#endif
     s->tray_locked = 0;
     s->tray_open = 0;
     /* ATA DMA state */
