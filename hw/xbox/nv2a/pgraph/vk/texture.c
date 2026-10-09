@@ -167,8 +167,13 @@ fail:
 static bool texture_can_compute_upload(PGRAPHVkState *r, TextureShape state,
                                         VkFormat format)
 {
+    /* Linear images use their explicit rectangle and pitch. Their border
+     * source flag never adds the virtual border used by swizzled textures;
+     * get_texture_layout() only expands it for non-linear formats. */
+    bool has_texture_border = state.border &&
+        !kelvin_color_format_info_map[state.color_format].linear;
     return r->texture_upload.enabled && format == VK_FORMAT_R8G8B8A8_UNORM &&
-           state.dimensionality == 2 && !state.cubemap && !state.border &&
+           state.dimensionality == 2 && !state.cubemap && !has_texture_border &&
            state.levels <= ARRAY_SIZE(((TextureBinding *)0)->upload_views);
 }
 
@@ -1046,9 +1051,14 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
     if ((copies[0] + copies[1]) % 64 == 0) {
         __android_log_print(ANDROID_LOG_INFO, "xemu-upload",
             "transfer=%" PRIu64 " %.1fMB %.2fms max=%.2fms; "
-            "compute=%" PRIu64 " %.1fMB %.2fms max=%.2fms",
+            "compute=%" PRIu64 " %.1fMB %.2fms max=%.2fms; "
+            "last=fmt%02x %ux%u dim%u linear%d border%d addr%u/%u path%d",
             copies[0], bytes[0] / 1048576.0, copy_ns[0] / 1e6, max_ns[0] / 1e6,
-            copies[1], bytes[1] / 1048576.0, copy_ns[1] / 1e6, max_ns[1] / 1e6);
+            copies[1], bytes[1] / 1048576.0, copy_ns[1] / 1e6, max_ns[1] / 1e6,
+            state->color_format, state->width, state->height, state->dimensionality,
+            kelvin_color_format_info_map[state->color_format].linear, state->border,
+            GET_MASK(binding->key.address, NV_PGRAPH_TEXADDRESS0_ADDRU),
+            GET_MASK(binding->key.address, NV_PGRAPH_TEXADDRESS0_ADDRV), path);
     }
 #else
     (void)copy_start;
