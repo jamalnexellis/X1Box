@@ -38,6 +38,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
+      - name: Preserve development APK signing identity
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: x1box-pgr2-development-signing-v1
       - name: Test read-only XISO media compatibility
         run: |
           cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iinclude hw/xbox/xiso_media.c android/test/cpp/test-xiso-media.c -o /tmp/test-xiso-media
@@ -86,6 +91,7 @@ jobs:
           pathlib.Path('/tmp/texture-upload.comp').write_text(shader)
           PY
           glslangValidator -V /tmp/texture-upload.comp -o android/app/build/outputs/native-tests/texture-upload.spv
+          glslangValidator -V android/test/cpp/texture-sample.comp -o android/app/build/outputs/native-tests/texture-sample.spv
       - name: Record APK checksum
         run: sha256sum android/app/build/outputs/apk/debug/app-debug.apk > android/app/build/outputs/apk/debug/SHA256SUMS.txt
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
@@ -100,4 +106,5 @@ jobs:
             android/app/build/outputs/native-tests/test-uniform-copy
             android/app/build/outputs/native-tests/test-texture-upload
             android/app/build/outputs/native-tests/texture-upload.spv
+            android/app/build/outputs/native-tests/texture-sample.spv
           compression-level: 0

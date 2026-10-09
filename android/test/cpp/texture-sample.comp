@@ -1,0 +1,10 @@
+#version 450
+layout(local_size_x=8, local_size_y=8, local_size_z=1) in;
+layout(set=0, binding=0) uniform sampler2D src;
+layout(rgba8, set=0, binding=1) uniform writeonly image2D dst;
+layout(push_constant) uniform Params { uint width, height; };
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (p.x >= width || p.y >= height) return;
+    imageStore(dst, ivec2(p), texelFetch(src, ivec2(p), 0));
+}

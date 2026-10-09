@@ -254,7 +254,12 @@ static VkColorFormatInfo texture_format_for_shape(PGRAPHVkState *r,
     VkColorFormatInfo vkf = r->texture_format_map[s.color_format];
     if (format_is_block_compressed(vkf.vk_format) &&
         !texture_shape_uses_blocks(r, s)) {
-        return kelvin_color_format_vk_map[s.color_format];
+        vkf = kelvin_color_format_vk_map[s.color_format];
+    }
+    if (vkf.vk_format == VK_FORMAT_B8G8R8A8_UNORM &&
+        texture_can_compute_upload(r, s, VK_FORMAT_R8G8B8A8_UNORM)) {
+        vkf.vk_format = VK_FORMAT_R8G8B8A8_UNORM;
+        vkf.component_map = texture_upload_bgra_mapping(vkf.component_map);
     }
     return vkf;
 }
@@ -1008,19 +1013,19 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
     if (compute_upload) {
         texture_compute_upload(r, binding, staging, cmd, regions, num_regions);
     } else {
-    pgraph_vk_transition_image_layout(pg, cmd, binding->image, vkf.vk_format,
+        pgraph_vk_transition_image_layout(pg, cmd, binding->image, vkf.vk_format,
                                       binding->current_layout,
                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    binding->current_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        binding->current_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
-    vkCmdCopyBufferToImage(cmd, staging->buffer,
+        vkCmdCopyBufferToImage(cmd, staging->buffer,
                            binding->image, binding->current_layout,
                            num_regions, regions);
 
-    pgraph_vk_transition_image_layout(pg, cmd, binding->image, vkf.vk_format,
+        pgraph_vk_transition_image_layout(pg, cmd, binding->image, vkf.vk_format,
                                       binding->current_layout,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    binding->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        binding->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
 #if defined(__ANDROID__) && NV2A_PERF_LOG

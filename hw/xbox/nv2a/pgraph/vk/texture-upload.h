@@ -51,4 +51,28 @@ static inline void texture_upload_dispatch(
     vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
 }
 
+static inline VkComponentSwizzle texture_upload_bgra_component(
+    VkComponentSwizzle component, VkComponentSwizzle identity)
+{
+    if (component == VK_COMPONENT_SWIZZLE_IDENTITY) component = identity;
+    if (component == VK_COMPONENT_SWIZZLE_R) return VK_COMPONENT_SWIZZLE_B;
+    if (component == VK_COMPONENT_SWIZZLE_B) return VK_COMPONENT_SWIZZLE_R;
+    return component;
+}
+
+/* BGRA bytes can use the same RGBA storage kernel without a CPU conversion.
+ * Compose the original sampling map with the red/blue exchange. Constants,
+ * including the forced alpha of XRGB textures, retain their meaning. Storage
+ * descriptors use a separate identity view. Raw image copies also retain the
+ * same four bytes when a cached texture switches to a render-surface source. */
+static inline VkComponentMapping texture_upload_bgra_mapping(VkComponentMapping map)
+{
+    return (VkComponentMapping) {
+        texture_upload_bgra_component(map.r, VK_COMPONENT_SWIZZLE_R),
+        texture_upload_bgra_component(map.g, VK_COMPONENT_SWIZZLE_G),
+        texture_upload_bgra_component(map.b, VK_COMPONENT_SWIZZLE_B),
+        texture_upload_bgra_component(map.a, VK_COMPONENT_SWIZZLE_A),
+    };
+}
+
 #endif
