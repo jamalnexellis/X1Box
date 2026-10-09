@@ -249,7 +249,8 @@ static bool texture_shape_uses_blocks(PGRAPHVkState *r, TextureShape s)
 /* The image format actually used for a texture, which is the block format only
  * when the shape can be uploaded as blocks. */
 static VkColorFormatInfo texture_format_for_shape(PGRAPHVkState *r,
-                                                  TextureShape s)
+                                                  TextureShape s,
+                                                  uint32_t address)
 {
     VkColorFormatInfo vkf = r->texture_format_map[s.color_format];
     if (format_is_block_compressed(vkf.vk_format) &&
@@ -257,7 +258,13 @@ static VkColorFormatInfo texture_format_for_shape(PGRAPHVkState *r,
         vkf = kelvin_color_format_vk_map[s.color_format];
     }
     if (vkf.vk_format == VK_FORMAT_B8G8R8A8_UNORM &&
-        texture_can_compute_upload(r, s, VK_FORMAT_R8G8B8A8_UNORM)) {
+        texture_can_compute_upload(r, s, VK_FORMAT_R8G8B8A8_UNORM) &&
+        GET_MASK(address, NV_PGRAPH_TEXADDRESS0_ADDRU) !=
+            NV_PGRAPH_TEXADDRESS0_ADDRU_BORDER &&
+        GET_MASK(address, NV_PGRAPH_TEXADDRESS0_ADDRV) !=
+            NV_PGRAPH_TEXADDRESS0_ADDRU_BORDER) {
+        /* Custom border colors with nonidentity views require an additional
+         * Vulkan feature. Keep border-addressed BGRA on the original path. */
         vkf.vk_format = VK_FORMAT_R8G8B8A8_UNORM;
         vkf.component_map = texture_upload_bgra_mapping(vkf.component_map);
     }
@@ -874,7 +881,7 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
     NV2A_PHASE_TIMER_BEGIN(texture_upload);
     PGRAPHVkState *r = pg->vk_renderer_state;
     TextureShape *state = &binding->key.state;
-    VkColorFormatInfo vkf = texture_format_for_shape(r, *state);
+    VkColorFormatInfo vkf = texture_format_for_shape(r, *state, binding->key.address);
 
     VK_LOG("upload_texture: idx=%d fmt=%d %ux%u cubemap=%d levels=%d",
            texture_idx, state->color_format, state->width, state->height,
@@ -2175,7 +2182,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
     snode->possibly_dirty = false;
     snode->hash = content_hash;
 
-    VkColorFormatInfo vkf = texture_format_for_shape(r, state);
+    VkColorFormatInfo vkf = texture_format_for_shape(r, state, address);
     assert(vkf.vk_format != 0);
     assert(0 < state.dimensionality);
     assert(state.dimensionality < ARRAY_SIZE(dimensionality_to_vk_image_type));
