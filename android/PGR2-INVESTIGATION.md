@@ -688,3 +688,32 @@ The user's original game and firmware/HDD files remain untouched. The existing
 default DSP setting is restored. The next useful measurement is the dependency's
 latency and the producer's execution versus scheduling/pacing time before
 selecting another synchronization or translation change.
+
+## First-use graphics stall capture (perf15)
+
+The user's new report distinguishes steady rendering from FPS drops as new
+objects appear. Stationary warmed-scene comparisons do not reproduce this
+trigger. The existing upload timer covers only command recording and omits
+decoding, staging and waits; it cannot attribute these first-use stalls.
+
+Perf15 adds `debug.xemu.vk.stall_profile=1`, off by default and latched before
+Vulkan worker creation. It records host wall times for texture hashing,
+decoding, staging, image allocation/view creation, upload recording, texture
+reuse/capacity waits, shader disk loads, compilation and persistence, graphics
+pipeline creation/persistence, submission and fence waits. Each guest flip
+reports its elapsed interval and the count/total/maximum/bytes of operations
+completed since the previous flip. At most 512 operations lasting at least
+2 ms also report their start/end times. No guest addresses, texture bytes,
+shader source or registers are recorded. The mode does not change texture
+formats, resolutions, shader behavior, cache identities or synchronization.
+
+These times include driver execution and host scheduling. Nested categories
+and operations on different threads can overlap, so totals are not additive
+GPU timings or proof of a critical path. Operations spanning a flip are charged
+to the interval in which they complete; individual slow events expose their
+actual bounds. The first flip contains initialization and must be excluded.
+Profiling itself adds overhead and cannot establish an FPS gain. The prepared
+capture must start a fresh process to exercise cold GPU texture state, retain
+the existing shader disk cache, and include movement into new scenery as well
+as the initial state load. Gameplay health and start/end images must pass review.
+Device capture and any resulting optimization remain pending.

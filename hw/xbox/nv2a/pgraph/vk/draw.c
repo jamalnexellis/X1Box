@@ -604,7 +604,7 @@ static void init_pipeline_cache(PGRAPHState *pg)
 #endif
 }
 
-static void save_pipeline_cache_to_disk(PGRAPHVkState *r)
+static void save_pipeline_cache_to_disk_impl(PGRAPHVkState *r)
 {
     size_t size = 0;
     VkResult res =
@@ -650,6 +650,13 @@ static void save_pipeline_cache_to_disk(PGRAPHVkState *r)
 }
 
 #define PIPELINE_CACHE_SAVE_INTERVAL_US (30 * 1000000LL)
+
+static void save_pipeline_cache_to_disk(PGRAPHVkState *r)
+{
+    int64_t start = nv2a_stall_start();
+    save_pipeline_cache_to_disk_impl(r);
+    nv2a_stall_record(NV2A_STALL_PIPELINE_SAVE, start, 0);
+}
 
 static void maybe_save_pipeline_cache(PGRAPHVkState *r)
 {
@@ -1185,8 +1192,10 @@ static void create_clear_pipeline(PGRAPHState *pg)
     };
 
     VkPipeline pipeline;
+    int64_t pipeline_start = nv2a_stall_start();
     VK_CHECK(vkCreateGraphicsPipelines(r->device, r->vk_pipeline_cache, 1,
                                        &pipeline_info, NULL, &pipeline));
+    nv2a_stall_record(NV2A_STALL_PIPELINE_CREATE, pipeline_start, 0);
 
     snode->pipeline = pipeline;
     snode->layout = layout;
@@ -1908,8 +1917,10 @@ static void create_pipeline(PGRAPHState *pg)
         .basePipelineHandle = VK_NULL_HANDLE,
     };
     VkPipeline pipeline;
+    int64_t pipeline_start = nv2a_stall_start();
     VK_CHECK(vkCreateGraphicsPipelines(r->device, r->vk_pipeline_cache, 1,
                                        &pipeline_create_info, NULL, &pipeline));
+    nv2a_stall_record(NV2A_STALL_PIPELINE_CREATE, pipeline_start, 0);
 
     snode->pipeline = pipeline;
     snode->layout = layout;
@@ -2411,6 +2422,7 @@ const enum NV2A_PROF_COUNTERS_ENUM finish_reason_to_counter_enum[] = {
 
 void pgraph_vk_flush_all_frames(PGRAPHState *pg)
 {
+    int64_t wait_start = nv2a_stall_start();
     PGRAPHVkState *r = pg->vk_renderer_state;
     pgraph_vk_render_thread_wait_idle(r);
     /*
@@ -2452,6 +2464,7 @@ void pgraph_vk_flush_all_frames(PGRAPHState *pg)
     r->ubo_descriptor_set_index = 0;
 #endif
     pgraph_vk_compute_finish_complete(r);
+    nv2a_stall_record(NV2A_STALL_FLUSH_WAIT, wait_start, 0);
 }
 
 static void flush_reorder_window_internal(NV2AState *d);
@@ -2599,6 +2612,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
 
         nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT);
         NV2A_PHASE_TIMER_BEGIN(finish_submit);
+        int64_t finish_submit_start = nv2a_stall_start();
 
         bool deferred = (finish_reason == VK_FINISH_REASON_FLIP_STALL ||
                          finish_reason == VK_FINISH_REASON_PRESENTING ||
@@ -2763,8 +2777,10 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
         }
 
         NV2A_PHASE_TIMER_END(finish_submit);
+        nv2a_stall_record(NV2A_STALL_FINISH_SUBMIT, finish_submit_start, 0);
 
         NV2A_PHASE_TIMER_BEGIN(finish_fence);
+        int64_t finish_wait_start = nv2a_stall_start();
 
         pgraph_vk_staging_reset(pg);
 
@@ -2915,6 +2931,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
 #endif
 
         NV2A_PHASE_TIMER_END(finish_fence);
+        nv2a_stall_record(NV2A_STALL_FINISH_WAIT, finish_wait_start, 0);
 
         if (check_budget) {
             pgraph_vk_check_memory_budget(pg);

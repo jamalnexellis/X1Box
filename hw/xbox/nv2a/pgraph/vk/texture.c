@@ -933,7 +933,10 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
 
     nv2a_profile_inc_counter(NV2A_PROF_TEX_UPLOAD);
 
+    int64_t decode_start = nv2a_stall_start();
     g_autofree TextureLayout *layout = get_texture_layout(pg, texture_idx);
+    nv2a_stall_record(NV2A_STALL_TEXTURE_DECODE, decode_start, 0);
+    int64_t stage_start = nv2a_stall_start();
 
     /*
      * During a diag capture, write out the CPU-side decoded level 0 exactly as
@@ -971,8 +974,10 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
             ARRAY_SIZE(r->texture_upload.sets)) {
         /* Submit recorded work before recycling descriptors. This must happen
          * before staging allocation, since finish can rotate the frame slot. */
+        int64_t wait_start = nv2a_stall_start();
         pgraph_vk_finish(pg, VK_FINISH_REASON_NEED_BUFFER_SPACE);
         pgraph_vk_flush_all_frames(pg);
+        nv2a_stall_record(NV2A_STALL_TEXTURE_CAPACITY_WAIT, wait_start, 0);
     }
 
     // Calculate decoded texture data size
@@ -988,6 +993,7 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
 
     VkDeviceSize staging_base = pgraph_vk_staging_alloc(pg, texture_data_size);
     if (staging_base == VK_WHOLE_SIZE) {
+        int64_t wait_start = nv2a_stall_start();
         OPT_STAT_INC(buf_stg_full);
         pgraph_vk_finish(pg, VK_FINISH_REASON_NEED_BUFFER_SPACE);
         staging_base = pgraph_vk_staging_alloc(pg, texture_data_size);
@@ -997,6 +1003,7 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
             staging_base = pgraph_vk_staging_alloc(pg, texture_data_size);
             assert(staging_base != VK_WHOLE_SIZE);
         }
+        nv2a_stall_record(NV2A_STALL_TEXTURE_CAPACITY_WAIT, wait_start, 0);
     }
     StorageBuffer *staging = get_staging_buffer(r, BUFFER_STAGING_SRC);
     uint8_t *mapped_memory_ptr = (uint8_t *)staging->mapped;
@@ -1043,6 +1050,8 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
 
     vmaFlushAllocation(r->allocator, staging->allocation,
                        staging_base, buffer_offset - staging_base);
+    nv2a_stall_record(NV2A_STALL_TEXTURE_STAGE, stage_start, texture_data_size);
+    int64_t record_start = nv2a_stall_start();
 
     OPT_STAT_INC(nd_texup);
     VkCommandBuffer cmd = pgraph_vk_begin_nondraw_commands(pg);
@@ -1115,6 +1124,7 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
     pgraph_vk_end_nondraw_commands(pg, cmd);
 
     // Release decoded texture data
+    nv2a_stall_record(NV2A_STALL_TEXTURE_RECORD, record_start, texture_data_size);
     for (int layer_idx = 0; layer_idx < num_layers; layer_idx++) {
         TextureLayer *layer = &layout->layers[layer_idx];
         for (int level_idx = 0; level_idx < state->levels; level_idx++) {
@@ -2150,10 +2160,12 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
 
     uint64_t content_hash = 0;
     if (!surface_to_texture && (was_surface_copy || possibly_dirty)) {
+        int64_t hash_start = nv2a_stall_start();
         content_hash = fast_hash(texture_data, texture_length);
         if (is_indexed) {
             content_hash ^= fast_hash(palette_data, texture_palette_data_size);
         }
+        nv2a_stall_record(NV2A_STALL_TEXTURE_HASH, hash_start, texture_length);
     }
 
     if (binding_found) {
@@ -2162,7 +2174,9 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         if (surface_to_texture) {
             if (surface->draw_time != snode->draw_time) {
                 if (snode->submit_time + r->num_active_frames > r->submit_count) {
+                    int64_t wait_start = nv2a_stall_start();
                     pgraph_vk_flush_all_frames(pg);
+                    nv2a_stall_record(NV2A_STALL_TEXTURE_REUSE_WAIT, wait_start, 0);
                 }
                 bool can_direct_bind = can_bind_surface_direct(r, surface);
 
@@ -2216,7 +2230,9 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
             if (was_surface_copy ||
                 (possibly_dirty && content_hash != snode->hash)) {
                 if (snode->submit_time + r->num_active_frames > r->submit_count) {
+                    int64_t wait_start = nv2a_stall_start();
                     pgraph_vk_flush_all_frames(pg);
+                    nv2a_stall_record(NV2A_STALL_TEXTURE_REUSE_WAIT, wait_start, 0);
                 }
                 upload_texture_image(pg, texture_idx, snode);
                 snode->hash = content_hash;
@@ -2290,6 +2306,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
     };
 
+    int64_t image_start = nv2a_stall_start();
     VkResult create_result = VK_SUCCESS;
     if (image_pool_acquire(r, &pool_cfg, &snode->image, &snode->allocation)) {
         snode->current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -2375,6 +2392,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
 
     VK_CHECK(vkCreateImageView(r->device, &image_view_create_info, NULL,
                                &snode->image_view));
+    nv2a_stall_record(NV2A_STALL_TEXTURE_IMAGE, image_start, 0);
 
 
     void *sampler_next_struct = NULL;

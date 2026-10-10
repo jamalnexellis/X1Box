@@ -192,7 +192,7 @@ void pgraph_vk_set_glslang_target(uint32_t device_api_version)
     }
 }
 
-GByteArray *pgraph_vk_compile_glsl_to_spv(glslang_stage_t stage,
+static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
                                           const char *glsl_source)
 {
     const glslang_input_t input = {
@@ -280,6 +280,15 @@ GByteArray *pgraph_vk_compile_glsl_to_spv(glslang_stage_t stage,
     glslang_shader_delete(shader);
 
     return g_byte_array_new_take(data, num_program_bytes);
+}
+
+GByteArray *pgraph_vk_compile_glsl_to_spv(glslang_stage_t stage,
+                                       const char *glsl_source)
+{
+    int64_t start = nv2a_stall_start();
+    GByteArray *spv = compile_glsl_to_spv(stage, glsl_source);
+    nv2a_stall_record(NV2A_STALL_SHADER_COMPILE, start, spv ? spv->len : 0);
+    return spv;
 }
 
 VkShaderModule pgraph_vk_create_shader_module_from_spv(PGRAPHVkState *r, GByteArray *spv)
@@ -422,7 +431,9 @@ static GByteArray *spv_cache_load(uint64_t hash)
     char *path = g_strdup_printf("%s/%016" PRIx64 ".spv", spv_cache_dir, hash);
     gchar *data = NULL;
     gsize len = 0;
+    int64_t start = nv2a_stall_start();
     gboolean ok = g_file_get_contents(path, &data, &len, NULL);
+    nv2a_stall_record(NV2A_STALL_SHADER_LOAD, start, ok ? len : 0);
     g_free(path);
     if (!ok || len < 4) {
         g_free(data);
@@ -435,7 +446,9 @@ static void spv_cache_store(uint64_t hash, GByteArray *spv)
 {
     ensure_spv_cache_dir();
     char *path = g_strdup_printf("%s/%016" PRIx64 ".spv", spv_cache_dir, hash);
+    int64_t start = nv2a_stall_start();
     g_file_set_contents(path, (const gchar *)spv->data, spv->len, NULL);
+    nv2a_stall_record(NV2A_STALL_SHADER_SAVE, start, spv->len);
     g_free(path);
 }
 

@@ -161,6 +161,7 @@ static void early_context_init(void)
 
 static void pgraph_vk_init(NV2AState *d, Error **errp)
 {
+    nv2a_stall_profile_init();
     PGRAPHState *pg = &d->pgraph;
 
     pg->vk_renderer_state = (PGRAPHVkState *)g_malloc0(sizeof(PGRAPHVkState));

@@ -41,6 +41,7 @@
 #include "debug.h"
 #include "constants.h"
 #include "glsl.h"
+#include "hw/xbox/nv2a/pgraph/stall-profile.h"
 
 #define HAVE_EXTERNAL_MEMORY 1
 

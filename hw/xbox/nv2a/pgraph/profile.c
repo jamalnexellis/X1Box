@@ -18,8 +18,92 @@
  */
 
 #include "hw/xbox/nv2a/nv2a_int.h"
+#include "stall-profile.h"
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <sys/system_properties.h>
+
+/* Initialized before Vulkan's worker threads start, never changed afterwards.
+ * GMutex also covers shader worker records. Timings are host wall time: nested
+ * phases and different threads can overlap and must not be added as GPU time. */
+bool nv2a_stall_profile_enabled;
+static GMutex stall_profile_lock;
+static unsigned int stall_slow_events_left = 512;
+static struct {
+    uint64_t count, us, max_us, bytes;
+} stall_phases[NV2A_STALL_PHASE_COUNT];
+static const char *const stall_phase_names[] = {
+    "tex_hash", "tex_decode", "tex_stage", "tex_record", "tex_image",
+    "tex_reuse_wait", "tex_capacity_wait", "shader_load", "shader_compile",
+    "shader_save", "pipeline_create", "pipeline_save", "flush_wait",
+    "finish_submit", "finish_wait"
+};
+
+void nv2a_stall_profile_init(void)
+{
+    QEMU_BUILD_BUG_ON(ARRAY_SIZE(stall_phase_names) != NV2A_STALL_PHASE_COUNT);
+    char property[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.vk.stall_profile", property);
+    nv2a_stall_profile_enabled = strcmp(property, "1") == 0;
+    __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+                        "host graphics stall profile=%d slow_event_quota=512",
+                        nv2a_stall_profile_enabled);
+}
+
+void nv2a_stall_record(NV2AStallPhase phase, int64_t start_us, uint64_t bytes)
+{
+    if (!start_us) {
+        return;
+    }
+    int64_t end_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    uint64_t elapsed = MAX(end_us - start_us, 0);
+    bool log_slow = false;
+    assert(phase < NV2A_STALL_PHASE_COUNT);
+    g_mutex_lock(&stall_profile_lock);
+    stall_phases[phase].count++;
+    stall_phases[phase].us += elapsed;
+    stall_phases[phase].bytes += bytes;
+    stall_phases[phase].max_us = MAX(stall_phases[phase].max_us, elapsed);
+    if (elapsed >= 2000 && stall_slow_events_left) {
+        stall_slow_events_left--;
+        log_slow = true;
+    }
+    g_mutex_unlock(&stall_profile_lock);
+    if (log_slow) {
+        __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+                            "op=%s start_us=%" PRId64 " end_us=%" PRId64
+                            " us=%" PRIu64 " bytes=%" PRIu64,
+                            stall_phase_names[phase], start_us, end_us,
+                            elapsed, bytes);
+    }
+}
+
+void nv2a_stall_frame(int64_t now_us)
+{
+    static int64_t previous_flip_us;
+    static uint64_t frame;
+    if (!nv2a_stall_profile_enabled) {
+        return;
+    }
+    GString *line = g_string_new(NULL);
+    g_string_append_printf(line, "frame=%" PRIu64 " end_us=%" PRId64
+                           " interval_us=%" PRId64,
+                           ++frame, now_us,
+                           previous_flip_us ? now_us - previous_flip_us : 0);
+    previous_flip_us = now_us;
+    g_mutex_lock(&stall_profile_lock);
+    for (int i = 0; i < NV2A_STALL_PHASE_COUNT; i++) {
+        g_string_append_printf(line, " %s=%" PRIu64 "/%" PRIu64
+                               "/%" PRIu64 "/%" PRIu64,
+                               stall_phase_names[i], stall_phases[i].count,
+                               stall_phases[i].us, stall_phases[i].max_us,
+                               stall_phases[i].bytes);
+    }
+    memset(stall_phases, 0, sizeof(stall_phases));
+    g_mutex_unlock(&stall_profile_lock);
+    __android_log_print(ANDROID_LOG_INFO, "xemu-stall", "%s", line->str);
+    g_string_free(line, true);
+}
 #endif
 
 #if defined(XBOX) && (!defined(XEMU_OPT_TB_CACHE_HINTS) || XEMU_OPT_TB_CACHE_HINTS)
@@ -32,6 +116,7 @@ NV2AStats g_nv2a_stats;
 void nv2a_profile_increment(void)
 {
     int64_t now = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    nv2a_stall_frame(now);
     const int64_t fps_update_interval = 250000;
     g_nv2a_stats.last_flip_time = now;
 

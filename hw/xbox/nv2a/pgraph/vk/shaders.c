@@ -1331,6 +1331,8 @@ void shader_module_key_persist(const ShaderModuleCacheKey *key)
         return;
     }
 
+    int64_t persist_start = nv2a_stall_start();
+
     const char *base = xemu_settings_get_base_path();
     char *path = g_strdup_printf("%sshader_module_keys.bin", base);
 
@@ -1353,6 +1355,8 @@ void shader_module_key_persist(const ShaderModuleCacheKey *key)
         fclose(f);
     }
     g_free(path);
+    nv2a_stall_record(NV2A_STALL_SHADER_SAVE, persist_start,
+                      sizeof(ShaderModuleCacheKey));
 }
 
 static void shader_module_compile_sync(PGRAPHVkState *r,

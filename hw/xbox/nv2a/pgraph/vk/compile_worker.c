@@ -128,9 +128,11 @@ static void process_pipeline_job(PGRAPHVkState *r, CompileJob *job)
     };
 
     VkPipeline pipeline;
+    int64_t pipeline_start = nv2a_stall_start();
     VkResult result = vkCreateGraphicsPipelines(
         p->device, p->vk_pipeline_cache, 1, &pipeline_create_info, NULL,
         &pipeline);
+    nv2a_stall_record(NV2A_STALL_PIPELINE_CREATE, pipeline_start, 0);
 
     if (result == VK_SUCCESS) {
         target->pipeline = pipeline;
