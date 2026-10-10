@@ -28,6 +28,10 @@ __attribute__((used)) static void *xemu_android_force_xemu_display_ref =
 extern void xemu_android_force_char_null_link(void);
 __attribute__((used)) static void *xemu_android_force_char_null_ref =
     (void *)&xemu_android_force_char_null_link;
+/* Keep the socket backend needed by the opt-in loopback guest debugger. */
+extern void xemu_android_force_char_socket_link(void);
+__attribute__((used)) static void *xemu_android_force_char_socket_ref =
+    (void *)&xemu_android_force_char_socket_link;
 /* Force-link the RAM memory-backend registration unit from the static lib. */
 extern void xemu_android_force_mem_backend_ram_link(void);
 __attribute__((used)) static void *xemu_android_force_mem_backend_ram_ref =

@@ -15,6 +15,7 @@ on:
       - target/i386/**
       - tcg/**
       - block/**
+      - chardev/**
       - util/**
       - ui/**
 

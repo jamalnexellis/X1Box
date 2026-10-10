@@ -455,16 +455,18 @@ MOV/POP SS, an already active shadow, TF/RF, instruction-count limits, icount,
 debug stepping, disabled chaining, breakpoint pages and plugins retain the
 existing path. Cache misses return with the updated EIP and hflags saved.
 No guest instructions or interrupt checks in the destination block are removed.
-CPU semantic validation and same-APK performance measurements are pending;
-this experiment must not be described as a measured FPS improvement.
+CPU semantic validation remains pending. The same-APK race comparison below
+does not establish a material performance gain; the experiment stays off by
+default.
 
 `debug.xemu.gdb=1` enables the existing guest debugger on `127.0.0.1:9009` for
 ADB forwarding. It is off by default and does not bind a network-facing address.
 The Android build now generates QEMU's i386 register feature table from its XML
 description instead of linking the empty feature stub.
-This permits reading the registers and guest memory at the identified polling
-instruction to determine what the CPU is waiting for. Debugging captures and
-guest data stay outside the repository, and FPS comparisons use debugging off.
+The register table is required for reading registers and guest memory at the
+identified polling instruction. The first device debugging attempt below
+exposes an additional Android linking omission. Debugging captures and guest
+data stay outside the repository, and FPS comparisons use debugging off.
 
 Perf11 source `897d5d28ccea8af6fafea1a2464be615de56e562` builds successfully
 in [CI run 38017930331](https://github.com/jamalnexellis/X1Box/actions/runs/38017930331).
@@ -476,5 +478,42 @@ table and the experimental switch are included. Its signing certificate
 matches perf10, permitting an update without uninstalling the development app.
 The private diagnostic client passes offline checks for fragmented packets,
 unexpected guest code, breakpoint removal and detach; these do not validate
-CPU semantics or device behavior. The user deferred phone testing. Perf10
-remains installed; there is no new phone capture or performance result.
+CPU semantics or device behavior.
+
+Authenticated wireless testing subsequently updates the development package
+to perf11 without uninstalling it. Four fresh-process, 25-second captures use
+the same stationary race snapshot, populated disk caches, compute uploads on
+and reclaimed registers on. The order is STI chaining off, on, on, off.
+Complete five-second windows starting at least five seconds after the marker
+are accepted; no debugger, CPU profiler or backup transfer runs during them.
+Configuration, EEPROM, controller and snapshot checks pass in all four runs.
+Every beginning/end screenshot shows a stationary car, neutral controls and
+coherent road, buildings and HUD; the game does not leave the foreground.
+Touch A resumes the snapshot's pause state in both configurations.
+
+| STI chaining | First run | Repeat |
+| --- | ---: | ---: |
+| Off | 15.276 FPS | 15.037 FPS |
+| On | 15.419 FPS | 15.107 FPS |
+
+The aggregates are 458 flips in 30,218 ms with chaining off and 461 flips in
+30,203 ms with it on: 15.157 versus 15.263 FPS, approximately 0.7% apart.
+Repeat variation exceeds this difference. Thermal status remains 0 but clocks
+are not held constant. There is no demonstrated material FPS gain, proof that
+the eligible STI path is used in this scene, or measurement of cold uploads.
+
+The separate debugger-enabled launch aborts before gameplay with
+`'socket' is not a valid char driver name`. The foreground guard prevents any
+subsequent touch input or screenshot. No wait-target registers are captured,
+and this failed diagnostic is excluded from FPS results. The static Android
+core omits the socket backend's registration unit because it has no referenced
+global symbol. Perf12 adds the same explicit Android link anchor already used
+by the null backend and keeps debugging disabled by default. Device validation
+of this correction remains pending.
+
+The current pre-test private HDD, snapshots, shader caches, preferences and
+EEPROM are restored through the app's UID even after the diagnostic failure.
+The downloaded backup checksum and restored HDD/EEPROM checksums match their
+pre-test contents. All temporary diagnostic properties are restored, and the
+emulator is stopped. The user's original game image and firmware/HDD files
+remain untouched.

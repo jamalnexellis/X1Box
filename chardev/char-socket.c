@@ -1610,3 +1610,10 @@ static void register_types(void)
 }
 
 type_init(register_types);
+
+#ifdef __ANDROID__
+/* Keep this constructor-only backend when linking the Android static core. */
+void xemu_android_force_char_socket_link(void)
+{
+}
+#endif
