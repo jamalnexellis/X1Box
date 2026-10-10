@@ -22,6 +22,32 @@
 #include "disas/disas.h"
 #include "tb-internal.h"
 
+#if defined(XBOX) && !defined(CONFIG_USER_ONLY)
+#include "exec/icount.h"
+#include "exec/replay-core.h"
+
+/*
+ * Based on the can_do_io elision in MichaelJSr/xemu-macos. With icount and
+ * replay disabled, leaving this flag true avoids per-TB stores and the
+ * deterministic-I/O recompile in io_prepare(). CPU initialization, ordinary
+ * TB returns and exception exits already restore true. The Android experiment
+ * is opt-in and latched before the first TB; do not mix the two modes in a
+ * process. Interrupt/exit checks and mem_io_pc assignment are unchanged.
+ */
+static bool xemu_elide_can_do_io(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0) {
+        const char *option = getenv("XEMU_TCG_ELIDE_CANDOIO");
+        enabled = option && strcmp(option, "1") == 0 &&
+                  !icount_enabled() && replay_mode == REPLAY_MODE_NONE;
+        error_report("TCG experimental can_do_io elision=%d", enabled);
+    }
+    return enabled;
+}
+#endif
+
 static void set_can_do_io(DisasContextBase *db, bool val)
 {
     QEMU_BUILD_BUG_ON(sizeof_field(CPUState, neg.can_do_io) != 1);
@@ -224,15 +250,24 @@ void translator_loop(CPUState *cpu, TranslationBlock *tb, int *max_insns,
      * Manage can_do_io for the translation block: set to false before
      * the first insn and set to true before the last insn.
      */
+    bool manage_can_do_io = true;
+#if defined(XBOX) && !defined(CONFIG_USER_ONLY)
+    manage_can_do_io = !xemu_elide_can_do_io() || plugin_enabled ||
+        (cflags & (CF_USE_ICOUNT | CF_SINGLE_STEP | CF_BP_PAGE | CF_MEMI_ONLY));
+#endif
     if (db->num_insns == 1) {
         tcg_debug_assert(first_insn_start == db->insn_start);
     } else {
         tcg_debug_assert(first_insn_start != db->insn_start);
-        tcg_ctx->emit_before_op = first_insn_start;
-        set_can_do_io(db, false);
+        if (manage_can_do_io) {
+            tcg_ctx->emit_before_op = first_insn_start;
+            set_can_do_io(db, false);
+        }
     }
-    tcg_ctx->emit_before_op = db->insn_start;
-    set_can_do_io(db, true);
+    if (manage_can_do_io) {
+        tcg_ctx->emit_before_op = db->insn_start;
+        set_can_do_io(db, true);
+    }
     tcg_ctx->emit_before_op = NULL;
 
     /* May be used by disas_log or plugin callbacks. */

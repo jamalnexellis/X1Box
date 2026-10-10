@@ -356,6 +356,26 @@ in a private backup. Diagnostic properties, debug logging and USB stay-awake
 settings are restored. The user's original game image and firmware/HDD files
 remain untouched.
 
+## Further opt-in translation candidate (perf13)
+
+The ARM64 [xemu-macos optimization ledger](https://github.com/MichaelJSr/xemu-macos/blob/macos-optimizations/docs/optimizations.md)
+describes removing per-block `can_do_io` stores when instruction counting and
+record/replay are disabled. Its performance reports concern another game and
+host and are not results for this fork or phone. The local translator emits
+these stores even into the profiled memory-poll block. MMIO encountered before
+the last instruction then takes a state-restore/recompile/re-execution path
+that exists for deterministic I/O scheduling.
+
+Perf13 adapts this candidate as `debug.xemu.tcg.elide_candoio=1`, off by default.
+The decision is latched before the first translated block and forced off with
+instruction counting or record/replay. Plugin, single-step, breakpoint-page,
+instruction-counted and memory-only replay blocks retain the existing stores.
+The normal CPU initialization, TB return and exception-exit paths keep the
+flag true. The MMU, MMIO callbacks, `mem_io_pc`, interrupt checks, exit-request
+checks, memory barriers and floating-point behavior are unchanged.
+Compilation, device compatibility, emitted-code checks and same-APK performance
+validation are pending. This is not a demonstrated FPS improvement.
+
 ## Android guest instruction profiling
 
 Perf9 adds opt-in Android perf-map and JIT-dump output in private app storage.

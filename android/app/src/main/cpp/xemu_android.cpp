@@ -1628,6 +1628,11 @@ extern "C" int SDL_main(int argc, char* argv[]) {
     const bool chain_sti_enabled = strcmp(chain_sti, "1") == 0;
     setenv("XEMU_TCG_CHAIN_STI", chain_sti_enabled ? "1" : "0", 1);
     LogInfoInt("TCG experimental STI chaining=%d", chain_sti_enabled ? 1 : 0);
+    char elide_can_do_io[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.tcg.elide_candoio", elide_can_do_io);
+    const bool elide_can_do_io_enabled = strcmp(elide_can_do_io, "1") == 0;
+    setenv("XEMU_TCG_ELIDE_CANDOIO", elide_can_do_io_enabled ? "1" : "0", 1);
+    LogInfoInt("TCG requested can_do_io elision=%d", elide_can_do_io_enabled ? 1 : 0);
     // Opt-in guest debugging through ADB forwarding; never listen on Wi-Fi.
     char guest_debug[PROP_VALUE_MAX] = {};
     __system_property_get("debug.xemu.gdb", guest_debug);
