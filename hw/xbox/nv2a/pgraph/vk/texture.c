@@ -141,7 +141,8 @@ static void texture_upload_compute_init(PGRAPHVkState *r)
             VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                 VK_IMAGE_USAGE_STORAGE_BIT,
-            VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT,
+            VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT |
+                VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
             &image_props) == VK_SUCCESS) {
         module = pgraph_vk_create_shader_module_from_glsl(
             r, VK_SHADER_STAGE_COMPUTE_BIT, texture_upload_r16_glsl);
@@ -200,8 +201,8 @@ static bool texture_can_compute_upload(PGRAPHVkState *r, TextureShape state,
     bool supported_format = format == VK_FORMAT_R8G8B8A8_UNORM ||
         (format == VK_FORMAT_R5G6B5_UNORM_PACK16 && r->texture_upload.r16_pipeline);
     return r->texture_upload.enabled && supported_format &&
-           state.dimensionality == 2 && !state.cubemap && !has_texture_border &&
-           state.levels <= ARRAY_SIZE(((TextureBinding *)0)->upload_views);
+           state.dimensionality == 2 && !has_texture_border &&
+           state.levels <= 16;
 }
 
 static void texture_compute_upload(PGRAPHVkState *r, TextureBinding *binding,
@@ -209,7 +210,8 @@ static void texture_compute_upload(PGRAPHVkState *r, TextureBinding *binding,
                                     const VkBufferImageCopy *regions, int count)
 {
     bool packed16 = binding->image_config.format == VK_FORMAT_R5G6B5_UNORM_PACK16;
-    texture_upload_image_barrier(cmd, binding->image, count,
+    texture_upload_image_barrier(cmd, binding->image,
+        binding->image_config.mip_levels, binding->image_config.array_layers,
         binding->current_layout, VK_IMAGE_LAYOUT_GENERAL,
         binding->current_layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 :
             VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
@@ -229,7 +231,9 @@ static void texture_compute_upload(PGRAPHVkState *r, TextureBinding *binding,
                 .pNext = &usage,
                 .image = binding->image, .viewType = VK_IMAGE_VIEW_TYPE_2D,
                 .format = packed16 ? VK_FORMAT_R16_UINT : VK_FORMAT_R8G8B8A8_UNORM,
-                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, i, 1, 0, 1 },
+                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT,
+                    regions[i].imageSubresource.mipLevel, 1,
+                    regions[i].imageSubresource.baseArrayLayer, 1 },
             };
             VK_CHECK(vkCreateImageView(r->device, &view_info, NULL,
                                        &binding->upload_views[i]));
@@ -254,7 +258,8 @@ static void texture_compute_upload(PGRAPHVkState *r, TextureBinding *binding,
             regions[i].bufferOffset, regions[i].imageExtent.width,
             regions[i].imageExtent.height);
     }
-    texture_upload_image_barrier(cmd, binding->image, count,
+    texture_upload_image_barrier(cmd, binding->image,
+        binding->image_config.mip_levels, binding->image_config.array_layers,
         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
@@ -962,7 +967,7 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
     }
     const int num_layers = state->cubemap ? 6 : 1;
     bool compute_upload = texture_can_compute_upload(r, *state, vkf.vk_format);
-    if (compute_upload && r->texture_upload.set_index + state->levels >
+    if (compute_upload && r->texture_upload.set_index + num_layers * state->levels >
             ARRAY_SIZE(r->texture_upload.sets)) {
         /* Submit recorded work before recycling descriptors. This must happen
          * before staging allocation, since finish can rotate the frame slot. */
@@ -1091,10 +1096,11 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
         __android_log_print(ANDROID_LOG_INFO, "xemu-upload",
             "transfer=%" PRIu64 " %.1fMB %.2fms max=%.2fms; "
             "compute=%" PRIu64 " %.1fMB %.2fms max=%.2fms; "
-            "last=fmt%02x %ux%u dim%u linear%d border%d addr%u/%u path%d",
+            "last=fmt%02x %ux%u dim%u cube%d mips%u linear%d border%d addr%u/%u path%d",
             copies[0], bytes[0] / 1048576.0, copy_ns[0] / 1e6, max_ns[0] / 1e6,
             copies[1], bytes[1] / 1048576.0, copy_ns[1] / 1e6, max_ns[1] / 1e6,
             state->color_format, state->width, state->height, state->dimensionality,
+            state->cubemap, state->levels,
             kelvin_color_format_info_map[state->color_format].linear, state->border,
             GET_MASK(binding->key.address, NV_PGRAPH_TEXADDRESS0_ADDRU),
             GET_MASK(binding->key.address, NV_PGRAPH_TEXADDRESS0_ADDRV), path);

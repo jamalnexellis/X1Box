@@ -53,19 +53,21 @@ static VkDeviceMemory bind_buffer(VkBuffer buffer)
     return memory;
 }
 
-static void test_image(uint32_t width, uint32_t height, uint32_t levels, bool packed16)
+static void test_image(uint32_t width, uint32_t height, uint32_t levels,
+                       uint32_t layers, bool packed16)
 {
-    VkBufferImageCopy regions[16] = {0};
-    VkImageView views[16];
-    VkDescriptorSet sets[16];
+    VkBufferImageCopy regions[96] = {0};
+    VkImageView views[96];
+    VkDescriptorSet sets[96];
+    uint32_t num_regions = levels * layers;
     size_t size = 16; /* Guard prefix exercises offset_words. */
-    for (uint32_t i = 0; i < levels; i++) {
-        uint32_t w = width >> i, h = height >> i;
+    for (uint32_t i = 0; i < num_regions; i++) {
+        uint32_t w = width >> (i % levels), h = height >> (i % levels);
         if (!w) w = 1;
         if (!h) h = 1;
         regions[i] = (VkBufferImageCopy){
             .bufferOffset = size,
-            .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1 },
+            .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, i % levels, i / levels, 1 },
             .imageExtent = { w, h, 1 },
         };
         size += texture_upload_level_size((size_t)w * h * (packed16 ? 2 : 4));
@@ -86,9 +88,10 @@ static void test_image(uint32_t width, uint32_t height, uint32_t levels, bool pa
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
         .format = packed16 ? VK_FORMAT_R5G6B5_UNORM_PACK16 : VK_FORMAT_R8G8B8A8_UNORM,
-        .flags = packed16 ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
-                            VK_IMAGE_CREATE_EXTENDED_USAGE_BIT : 0,
-        .extent = { width, height, 1 }, .mipLevels = levels, .arrayLayers = 1,
+        .flags = (packed16 ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
+                            VK_IMAGE_CREATE_EXTENDED_USAGE_BIT : 0) |
+                 (layers == 6 ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0),
+        .extent = { width, height, 1 }, .mipLevels = levels, .arrayLayers = layers,
         .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
         .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                  VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -105,7 +108,7 @@ static void test_image(uint32_t width, uint32_t height, uint32_t levels, bool pa
     VkDeviceMemory image_memory;
     CHECK(vkAllocateMemory(device, &alloc, NULL, &image_memory));
     CHECK(vkBindImageMemory(device, image, image_memory, 0));
-    for (uint32_t i = 0; i < levels; i++) {
+    for (uint32_t i = 0; i < num_regions; i++) {
         VkImageViewUsageCreateInfo usage = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
             .usage = VK_IMAGE_USAGE_STORAGE_BIT,
@@ -115,7 +118,7 @@ static void test_image(uint32_t width, uint32_t height, uint32_t levels, bool pa
             .pNext = &usage,
             .image = image, .viewType = VK_IMAGE_VIEW_TYPE_2D,
             .format = packed16 ? VK_FORMAT_R16_UINT : VK_FORMAT_R8G8B8A8_UNORM,
-            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, i, 1, 0, 1 },
+            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, i % levels, 1, i / levels, 1 },
         };
         CHECK(vkCreateImageView(device, &view_info, NULL, &views[i]));
         VkDescriptorSetAllocateInfo set_info = {
@@ -144,7 +147,7 @@ static void test_image(uint32_t width, uint32_t height, uint32_t levels, bool pa
     VkCommandBuffer cmd;
     CHECK(vkAllocateCommandBuffers(device, &cmd_info, &cmd));
     for (uint32_t pass = 0; pass < 3; pass++) {
-        for (size_t i = 0; i < size; i++) src_data[i] = (uint8_t)(i * 73 + pass * 91);
+        for (size_t i = 0; i < size; i++) src_data[i] = (uint8_t)(i * 73 + (i >> 8) * 19 + pass * 91);
         memset(dst_data, 0xa5, size);
         VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         CHECK(vkBeginCommandBuffer(cmd, &begin));
@@ -157,23 +160,23 @@ static void test_image(uint32_t width, uint32_t height, uint32_t levels, bool pa
         };
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 1, &host, 0, NULL);
-        texture_upload_image_barrier(cmd, image, levels,
+        texture_upload_image_barrier(cmd, image, levels, layers,
             pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_GENERAL, pass ? VK_ACCESS_MEMORY_READ_BIT : 0,
             VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, packed16 ? r16_pipeline : pipeline);
-        for (uint32_t i = 0; i < levels; i++) {
+        for (uint32_t i = 0; i < num_regions; i++) {
             texture_upload_dispatch(cmd, layout, sets[i], regions[i].bufferOffset,
                 regions[i].imageExtent.width, regions[i].imageExtent.height);
         }
-        texture_upload_image_barrier(cmd, image, levels, VK_IMAGE_LAYOUT_GENERAL,
+        texture_upload_image_barrier(cmd, image, levels, layers, VK_IMAGE_LAYOUT_GENERAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_WRITE_BIT,
             VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT);
         vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                dst, levels, regions);
-        texture_upload_image_barrier(cmd, image, levels, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                dst, num_regions, regions);
+        texture_upload_image_barrier(cmd, image, levels, layers, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
             VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
@@ -189,7 +192,7 @@ static void test_image(uint32_t width, uint32_t height, uint32_t levels, bool pa
         CHECK(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE));
         CHECK(vkQueueWaitIdle(queue));
         for (size_t i = 0; i < 16; i++) assert(dst_data[i] == 0xa5);
-        for (uint32_t i = 0; i < levels; i++) {
+        for (uint32_t i = 0; i < num_regions; i++) {
             size_t offset = regions[i].bufferOffset;
             size_t bytes = (size_t)regions[i].imageExtent.width *
                 regions[i].imageExtent.height * (packed16 ? 2 : 4);
@@ -200,7 +203,7 @@ static void test_image(uint32_t width, uint32_t height, uint32_t levels, bool pa
         CHECK(vkResetCommandBuffer(cmd, 0));
     }
     vkFreeCommandBuffers(device, command_pool, 1, &cmd);
-    for (uint32_t i = 0; i < levels; i++) vkDestroyImageView(device, views[i], NULL);
+    for (uint32_t i = 0; i < num_regions; i++) vkDestroyImageView(device, views[i], NULL);
     vkDestroyImage(device, image, NULL);
     vkFreeMemory(device, image_memory, NULL);
     vkUnmapMemory(device, src_memory);
@@ -210,7 +213,7 @@ static void test_image(uint32_t width, uint32_t height, uint32_t levels, bool pa
     vkFreeMemory(device, src_memory, NULL);
     vkFreeMemory(device, dst_memory, NULL);
     CHECK(vkResetDescriptorPool(device, descriptor_pool, 0));
-    printf("PASS %ux%u %u mips, three exact %s uploads\n", width, height, levels,
+    printf("PASS %ux%u %u mips %u faces, three exact %s uploads\n", width, height, levels, layers,
            packed16 ? "RGB565" : "RGBA8");
 }
 
@@ -356,7 +359,7 @@ static void test_sampling(const char *sample_shader, bool packed16)
         .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, .imageExtent = { width, height, 1 } };
     bool first_output = true;
     for (uint32_t pass = 0; pass < 3; pass++) {
-        for (size_t i = 0; i < size; i++) src_data[i] = (uint8_t)(i * 73 + pass * 91);
+        for (size_t i = 0; i < size; i++) src_data[i] = (uint8_t)(i * 73 + (i >> 8) * 19 + pass * 91);
         if (packed16) {
             for (uint32_t i = 0; i < width * height; i++) {
                 uint16_t word = (uint16_t)(i + pass * 17027);
@@ -371,16 +374,16 @@ static void test_sampling(const char *sample_shader, bool packed16)
             .buffer = src, .size = VK_WHOLE_SIZE };
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                               0, 0, NULL, 1, &host, 0, NULL);
-        texture_upload_image_barrier(cmd, images[0], 1,
+        texture_upload_image_barrier(cmd, images[0], 1, 1,
             pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_GENERAL, pass ? VK_ACCESS_SHADER_READ_BIT : 0,
             VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, packed16 ? r16_pipeline : pipeline);
         texture_upload_dispatch(cmd, layout, upload, 16, width, height);
-        texture_upload_image_barrier(cmd, images[0], 1, VK_IMAGE_LAYOUT_GENERAL,
+        texture_upload_image_barrier(cmd, images[0], 1, 1, VK_IMAGE_LAYOUT_GENERAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_WRITE_BIT,
             VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-        texture_upload_image_barrier(cmd, images[1], 1,
+        texture_upload_image_barrier(cmd, images[1], 1, 1,
             pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, pass ? VK_ACCESS_SHADER_READ_BIT : 0,
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -388,17 +391,17 @@ static void test_sampling(const char *sample_shader, bool packed16)
             .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, .extent = { width, height, 1 } };
         vkCmdCopyImage(cmd, images[0], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                        images[1], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-        texture_upload_image_barrier(cmd, images[0], 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        texture_upload_image_barrier(cmd, images[0], 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-        texture_upload_image_barrier(cmd, images[1], 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        texture_upload_image_barrier(cmd, images[1], 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
             VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
         vkCmdCopyImage(cmd, images[1], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                        images[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
         if (packed16) {
             memset(dst_data, 0xa5, size);
-            texture_upload_image_barrier(cmd, images[0], 1,
+            texture_upload_image_barrier(cmd, images[0], 1, 1,
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -414,7 +417,7 @@ static void test_sampling(const char *sample_shader, bool packed16)
                                   0, 0, NULL, 1, &raw, 0, NULL);
         }
         for (int i = 0; i < 2; i++) {
-            texture_upload_image_barrier(cmd, images[i], 1,
+            texture_upload_image_barrier(cmd, images[i], 1, 1,
                 i || packed16 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 i || packed16 ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -456,7 +459,7 @@ static void test_sampling(const char *sample_shader, bool packed16)
                 vkUpdateDescriptorSets(device, 2, writes, 0, NULL);
                 memset(dst_data, 0xa5, size);
                 CHECK(vkBeginCommandBuffer(cmd, &begin));
-                texture_upload_image_barrier(cmd, images[2], 1,
+                texture_upload_image_barrier(cmd, images[2], 1, 1,
                     first_output ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                     VK_IMAGE_LAYOUT_GENERAL, first_output ? 0 : VK_ACCESS_TRANSFER_READ_BIT,
                     VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
@@ -466,7 +469,7 @@ static void test_sampling(const char *sample_shader, bool packed16)
                 uint32_t params[] = { width, height };
                 vkCmdPushConstants(cmd, sample_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(params), params);
                 vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
-                texture_upload_image_barrier(cmd, images[2], 1, VK_IMAGE_LAYOUT_GENERAL,
+                texture_upload_image_barrier(cmd, images[2], 1, 1, VK_IMAGE_LAYOUT_GENERAL,
                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_WRITE_BIT,
                     VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
                 VkBufferMemoryBarrier output = host;
@@ -586,10 +589,10 @@ int main(int argc, char **argv)
     VkDescriptorSetLayoutCreateInfo set_info = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = 2, .pBindings = bindings };
     CHECK(vkCreateDescriptorSetLayout(device, &set_info, NULL, &set_layout));
-    VkDescriptorPoolSize sizes[] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16 },
-                                   { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 16 } };
+    VkDescriptorPoolSize sizes[] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 96 },
+                                   { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 96 } };
     VkDescriptorPoolCreateInfo descriptor_info = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = 16, .poolSizeCount = 2, .pPoolSizes = sizes };
+        .maxSets = 96, .poolSizeCount = 2, .pPoolSizes = sizes };
     CHECK(vkCreateDescriptorPool(device, &descriptor_info, NULL, &descriptor_pool));
     VkPushConstantRange push = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 12 };
     VkPipelineLayoutCreateInfo layout_info = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -611,11 +614,14 @@ int main(int argc, char **argv)
     CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &r16_pipeline));
     vkDestroyShaderModule(device, module, NULL);
     for (int packed16 = 0; packed16 < 2; packed16++) {
-        test_image(1, 1, 1, packed16);
-        test_image(17, 31, 1, packed16);
-        test_image(257, 129, 9, packed16);
-        test_image(512, 512, 10, packed16);
-        test_image(640, 480, 1, packed16);
+        test_image(1, 1, 1, 1, packed16);
+        test_image(17, 31, 1, 1, packed16);
+        test_image(257, 129, 9, 1, packed16);
+        test_image(512, 512, 10, 1, packed16);
+        test_image(640, 480, 1, 1, packed16);
+        test_image(1, 1, 1, 6, packed16);
+        test_image(16, 16, 5, 6, packed16);
+        test_image(256, 256, 9, 6, packed16);
         test_sampling(argv[2], packed16);
     }
     vkDestroyPipeline(device, r16_pipeline, NULL);

@@ -737,8 +737,8 @@ typedef struct TextureBinding {
     VkImageView image_view;
     VmaAllocation allocation;
     VkSampler sampler;
-    /* Identity storage views, one per mip, used only for RGBA8 compute uploads. */
-    VkImageView upload_views[16];
+    /* Identity storage views, one per mip/face, for compute texture uploads. */
+    VkImageView upload_views[16 * 6];
     bool possibly_dirty;
     uint64_t hash;
     unsigned int draw_time;

@@ -41,7 +41,7 @@ static inline size_t texture_upload_level_size(size_t size)
 }
 
 static inline void texture_upload_image_barrier(
-    VkCommandBuffer cmd, VkImage image, uint32_t levels,
+    VkCommandBuffer cmd, VkImage image, uint32_t levels, uint32_t layers,
     VkImageLayout old_layout, VkImageLayout new_layout,
     VkAccessFlags src_access, VkAccessFlags dst_access,
     VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage)
@@ -55,7 +55,7 @@ static inline void texture_upload_image_barrier(
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = image,
-        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1 },
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, layers },
     };
     vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0,
                          0, NULL, 0, NULL, 1, &barrier);
