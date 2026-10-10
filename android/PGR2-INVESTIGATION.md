@@ -628,4 +628,23 @@ only the already submitted four source bytes are inspected. The probe never
 acknowledges a command, bypasses a wait or changes DSP execution budgets.
 It covers GP/EP scratch and FIFO DMA, not all possible RAM writers, so an absent
 event would leave the dependency unresolved. Captures stay private and are
-excluded from FPS comparisons. Compilation and device validation are pending.
+excluded from FPS comparisons.
+
+Source `abf6e9de376c013dc53a80d2643e317029037a67` builds successfully in
+[CI run 38021000818](https://github.com/jamalnexellis/X1Box/actions/runs/38021000818).
+Version `1.2.9-pgr2-perf14` (43) has APK SHA-256
+`bcf231fe44fdc524f38ed61750a533832f0f6daad89b8f3eb13a229a29870613`.
+The downloaded artifact checksum matches CI, its certificate matches perf13,
+and the packaged ARM64 library contains both diagnostic entry points and
+mode strings. The private RSP client passes offline checks for fragmented
+packets, multiple monitor output packets, rejected-watch cleanup, mismatched
+guest code, breakpoint removal and detach. These are preparation checks;
+device validation remains pending.
+
+A private comparison script also prepares the application's existing full-DSP
+option off/on/on/off within the same APK and stationary snapshot. Only that
+preference changes; DSP JIT remains on and CPU/compute modes remain fixed.
+This tests a supported audio configuration, without changing DSP execution
+budgets in code. It is a separate FPS experiment from the debugger-enabled
+writer capture. No result or APU bottleneck is established yet. A fresh phone
+availability window is requested before either test runs.
