@@ -1167,3 +1167,17 @@ fence waits, resource lifetimes and cubemap defaults are unchanged. Profiling
 off takes no timestamp or extra log. This diagnostic will separate fence
 waiting from the remaining CPU work before changing scheduling. CI, artifact
 checks and a fresh guarded capture are pending.
+
+Source `1f92fbdb17926c828f67020c8016f9322f45fa74` succeeds in
+[CI run 38077923995](https://github.com/jamalnexellis/X1Box/actions/runs/38077923995).
+The downloaded version `1.2.9-pgr2-perf21` (50) has APK SHA-256
+`ce65c41c1995f71e977b620f0791b4b690a2033e5d3b50b05b666d0d2b6858b5`.
+It matches CI's checksum, keeps the previous certificate identity and contains
+the slot-fence coverage message and existing split-frame/cubemap diagnostics.
+Android compilation and host fixtures pass. The guarded three-minute runner
+requires a new absolute availability deadline, actual runtime coverage, current
+state backup and independent restoration verification. Its private analysis
+only attributes fully contained same-thread slow fence intervals; incomplete
+coverage, short waits, the shared quota and overlapping thread totals cannot
+be presented as pure CPU/GPU execution time. No perf21 install or capture has
+occurred yet; fresh device availability is requested after artifact checks.
