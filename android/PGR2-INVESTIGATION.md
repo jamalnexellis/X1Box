@@ -1044,3 +1044,57 @@ regions completely contained in texture-range fallback parent regions. All
 4,096-event quota expires during the trace, so these events are a bounded
 subset; complete per-flip counters remain available. Requested byte length
 alone does not establish texture dimensions, format or cubemap layout.
+
+The fresh three-minute perf19 capture installs successfully and joins complete
+split-frame records. The three images show a stationary initial car with neutral
+controls, then 99 km/h and new scenery after a complete trigger press/release.
+All sixteen bounded slow-detail samples identify one shape: a swizzled RGB565
+256-by-256 cubemap, one mip, no border, with six dirty overlapping surfaces. The
+selected exact-base color surface is also swizzled RGB565, 256-by-256, pitch 512,
+two bytes per pixel and no pending upload. These startup samples identify the
+shape; they do not independently establish eligibility of every face throughout
+gameplay.
+
+The initial segment has 242 complete flips (median 62.965 ms, p95 70.036 ms).
+Movement has 377 (median 65.036 ms, p95 82.055 ms, maximum 104.277 ms). Deferred
+completion remains once per flip: 377 calls and 10,039.961 ms during movement,
+averaging 26.631 ms. Texture-range parents overlap that wait; their requested
+range counters are not transferred bytes. Shader compilation stays zero, texture
+decode peaks at 1.488 ms and pipeline creation at 36.506 ms. This diagnostic
+does not establish a performance improvement. Archive, HDD, EEPROM ownership
+and all nine originally empty properties are independently verified after
+restoration through the app UID; the emulator is stopped and the phone released.
+
+## Opt-in GPU copy for the observed cubemap (perf20)
+
+The candidate `debug.xemu.vk.cube_copy=1` copies six active color surface images
+directly into the cubemap's six layers. It is off by default and applies only
+to one-mip, borderless, swizzled native RGB565 cubes at scale one. Every face
+must be initialized, have an exact base, matching dimensions, pitch and size,
+an active CPU access callback and no pending upload/download. Missing, shelved,
+depth, differently formatted or otherwise incompatible sources keep the CPU
+fallback. The existing guest CPU access callbacks and required CPU readbacks
+remain active; GPU copying does not pretend CPU VRAM has been refreshed.
+
+Refresh identity covers all six images and their draw times/generations, plus
+the active surface-list generation to detect retired/recreated sources. GPU
+source changes are checked before draw fast paths can skip texture binding.
+CPU dirty aliases invalidate the copy identity. Returning from a cube copy to
+the CPU path forces a fresh hash/upload, even if old CPU VRAM appeared clean.
+
+Prior queued draws are recorded first. Shared production copy code transitions
+all six sources and the destination with explicit same-queue barriers, copies
+each face to its corresponding layer, restores source layouts and transitions
+the destination for sampling. It updates the existing image without changing
+descriptors or removing resource retirement. It adds no host fence wait to the
+GPU copy. The 43-category profiler remains compatible; copy recording uses the
+existing texture-record phase and bounded shape-only detail messages. A runtime
+message confirms the path was actually used even with profiling off.
+
+New fixtures reject incompatible or incomplete sources and changes to every
+face identity. A Vulkan fixture executes the shared copy code with generated
+RGB565 patterns at 16 and 256 pixels, checks all six layers, then replaces only
+face five across separately queued command buffers without a host wait between
+them. CI runs it on software Vulkan with synchronization validation and also
+builds the Android executable for the actual driver. CI/artifact checks and
+device graphics/FPS validation remain pending; no gain is accepted yet.

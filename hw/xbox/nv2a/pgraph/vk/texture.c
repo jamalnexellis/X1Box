@@ -30,6 +30,7 @@
 #include "qemu/lru.h"
 #include "renderer.h"
 #include "texture-upload.h"
+#include "cubemap-copy-vk.h"
 #include "qemu/timer.h"
 
 #ifdef __ANDROID__
@@ -41,6 +42,7 @@ static void texture_cache_release_node_resources(PGRAPHVkState *r, TextureBindin
 static bool image_pool_acquire(PGRAPHVkState *r, const TextureImageConfig *config,
                                VkImage *out_image, VmaAllocation *out_allocation);
 static void image_pool_drain(PGRAPHVkState *r);
+static bool cube_binding_needs_refresh(PGRAPHState *pg, TextureBinding *binding);
 
 static void texture_upload_compute_destroy(PGRAPHVkState *r)
 {
@@ -820,6 +822,7 @@ static void mark_texture_range_dirty(NV2AState *d, hwaddr addr, hwaddr size,
             if (confirmed_dirty) {
                 tnode->dirty_check_frame = d->pgraph.frame_time;
                 tnode->dirty_check_result = true;
+                tnode->cube_copy_cache.valid = false;
             }
         }
         tnode->possibly_dirty |= overlapping;
@@ -876,6 +879,20 @@ bool pgraph_vk_poll_texture_memory_dirty(NV2AState *d)
         bool texture_dirty = check_texture_dirty(
             d, binding->key.texture_vram_offset,
             binding->key.texture_length);
+
+        /* Draws do not dirty CPU VRAM until readback. Check all GPU cubemap
+         * faces before register/pipeline fast paths can skip texture binding.
+         * Leave CPU dirty polling and its invalidation below in place. */
+        if (binding->cube_surface_copy &&
+            cube_binding_needs_refresh(&d->pgraph, binding)) {
+            found_dirty = true;
+            if (!binding->possibly_dirty) {
+                r->texture_vram_gen++;
+            }
+            binding->possibly_dirty = true;
+            binding->dirty_check_frame = d->pgraph.frame_time;
+            binding->dirty_check_result = true;
+        }
         if (texture_dirty) {
             found_dirty = true;
             mark_texture_range_dirty(d, binding->key.texture_vram_offset,
@@ -1744,6 +1761,150 @@ static bool check_surface_to_texture_compatiblity(PGRAPHVkState *r,
            surface->host_fmt.host_bytes_per_pixel == vk_format_texel_size(tex_vkf.vk_format);
 }
 
+static bool cube_copy_enabled(void)
+{
+#ifdef __ANDROID__
+    static int enabled = -1;
+    if (enabled < 0) {
+        char prop[PROP_VALUE_MAX] = {};
+        enabled = __system_property_get("debug.xemu.vk.cube_copy", prop) > 0 &&
+                  prop[0] == '1';
+        __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                            "GPU cubemap copy experiment=%d", enabled);
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+static bool get_cube_copy_sources(PGRAPHState *pg, const TextureShape *shape,
+    hwaddr base, size_t length, SurfaceBinding *sources[6], VkCubeCopyKey *key)
+{
+    if (!cube_copy_enabled() || !shape->cubemap ||
+        shape->color_format != NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R5G6B5 ||
+        shape->levels != 1 || shape->border || pg->surface_scale_factor != 1) {
+        return false;
+    }
+    NV2AState *d = container_of(pg, NV2AState, pgraph);
+    PGRAPHVkState *r = pg->vk_renderer_state;
+    size_t layer_size = get_cubemap_layer_size(pg, *shape);
+    if (!layer_size || layer_size > SIZE_MAX / 6 ||
+        length != layer_size * 6 || base > UINT64_MAX - length) {
+        return false;
+    }
+    VkCubeCopyFace faces[6] = { 0 };
+    memset(key, 0, sizeof(*key));
+    key->surface_list_gen = r->surface_list_gen;
+    for (unsigned i = 0; i < 6; i++) {
+        SurfaceBinding *s = pgraph_vk_surface_get(d, base + layer_size * i);
+        if (!s) {
+            return false;
+        }
+        sources[i] = s;
+        faces[i] = (VkCubeCopyFace) {
+            .address = s->vram_addr, .size = s->size, .image = (uint64_t)s->image,
+            .width = s->width, .height = s->height, .pitch = s->pitch,
+            .active = s->access_cb != NULL, .color = s->color,
+            .swizzle = s->swizzle,
+            .initialized = s->initialized && s->image_layout != VK_IMAGE_LAYOUT_UNDEFINED,
+            .native_rgb565 = s->host_fmt.vk_format == VK_FORMAT_R5G6B5_UNORM_PACK16 &&
+                s->host_fmt.host_bytes_per_pixel == 2 &&
+                s->shape.color_format == NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5,
+            .upload_pending = s->upload_pending,
+            .download_pending = s->download_pending,
+        };
+        key->image[i] = (uint64_t)s->image;
+        key->draw_time[i] = s->draw_time;
+        key->draw_generation[i] = s->draw_generation;
+    }
+    return vk_cube_copy_eligible(base, length, layer_size, shape->width,
+        shape->height, shape->depth, shape->dimensionality, shape->levels,
+        pg->surface_scale_factor, shape->cubemap, shape->border,
+        r->texture_format_map[shape->color_format].vk_format ==
+            VK_FORMAT_R5G6B5_UNORM_PACK16, faces);
+}
+
+static bool cube_binding_needs_refresh(PGRAPHState *pg, TextureBinding *binding)
+{
+    PGRAPHVkState *r = pg->vk_renderer_state;
+    if (binding->cube_copy_cache.valid &&
+        binding->cube_seen_draw_gen == r->surface_draw_gen &&
+        binding->cube_seen_list_gen == r->surface_list_gen) {
+        return false;
+    }
+    SurfaceBinding *sources[6];
+    VkCubeCopyKey key;
+    bool eligible = get_cube_copy_sources(pg, &binding->key.state,
+        binding->key.texture_vram_offset, binding->key.texture_length,
+        sources, &key);
+    if (!eligible || vk_cube_copy_needs_refresh(&binding->cube_copy_cache, &key)) {
+        return true;
+    }
+    binding->cube_seen_draw_gen = r->surface_draw_gen;
+    binding->cube_seen_list_gen = r->surface_list_gen;
+    return false;
+}
+
+static void copy_cube_surfaces_to_texture(PGRAPHState *pg,
+    SurfaceBinding *sources[6], TextureBinding *texture)
+{
+    PGRAPHVkState *r = pg->vk_renderer_state;
+    NV2AState *d = container_of(pg, NV2AState, pgraph);
+    /* Record prior users before an in-place GPU update. Descriptors and
+     * allocations stay live under existing retirement policies; GPU barriers
+     * preserve required queue dependencies without a host readback wait. */
+    if (r->reorder_window.count > 0) {
+        pgraph_vk_flush_reorder_window(d);
+    }
+    if (r->draw_queue.count > 0) {
+        pgraph_vk_flush_draw_queue(d);
+    }
+    VkCubeCopyKey key = { .surface_list_gen = r->surface_list_gen };
+    VkImage images[6];
+    VkImageLayout layouts[6];
+    for (unsigned i = 0; i < 6; i++) {
+        images[i] = sources[i]->image;
+        layouts[i] = sources[i]->image_layout;
+        key.image[i] = (uint64_t)images[i];
+        key.draw_time[i] = sources[i]->draw_time;
+        key.draw_generation[i] = sources[i]->draw_generation;
+    }
+    if (vk_cube_copy_needs_refresh(&texture->cube_copy_cache, &key)) {
+        int64_t start = nv2a_stall_start();
+        VkCommandBuffer cmd = pgraph_vk_begin_nondraw_commands(pg);
+        vk_cube_copy_record(cmd, images, layouts, texture->image,
+            texture->current_layout, texture->key.state.width,
+            texture->key.state.height);
+        pgraph_vk_end_nondraw_commands(pg, cmd);
+        texture->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        texture->cube_copy_cache.key = key;
+        texture->cube_copy_cache.valid = true;
+        nv2a_profile_inc_counter(NV2A_PROF_SURF_TO_TEX);
+        nv2a_stall_record(NV2A_STALL_TEXTURE_RECORD, start, 0);
+#ifdef __ANDROID__
+        static bool engaged;
+        static unsigned detail_count;
+        if (!engaged) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                                "GPU cubemap copy path engaged: RGB565 six faces");
+            engaged = true;
+        }
+        if (start && detail_count++ < 16) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-stall-detail",
+                "cube_gpu_copy faces=6 width=%u height=%u us=%" PRId64,
+                texture->key.state.width, texture->key.state.height,
+                qemu_clock_get_us(QEMU_CLOCK_REALTIME) - start);
+        }
+#endif
+    }
+    texture->cube_surface_copy = true;
+    texture->draw_time = 0;
+    texture->cube_seen_draw_gen = r->surface_draw_gen;
+    texture->cube_seen_list_gen = r->surface_list_gen;
+    texture->possibly_dirty = false;
+}
+
 #ifdef __ANDROID__
 /* Bounded shape-only evidence for the expensive CPU fallback. No addresses,
  * texture contents or shader source are emitted. Collect before download so
@@ -2100,6 +2261,12 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         }
     }
 
+    SurfaceBinding *cube_sources[6];
+    VkCubeCopyKey cube_key;
+    bool cube_to_texture = get_cube_copy_sources(pg, &state,
+        texture_vram_offset, texture_length, cube_sources, &cube_key);
+    bool gpu_texture = surface_to_texture || cube_to_texture;
+
     /*
      * Shelved surfaces are deliberately not used as texture sources.  A
      * shelved surface has no CPU access callback registered, so guest
@@ -2112,7 +2279,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
      * path below sees the correct pixels.
      */
 
-    if (!surface_to_texture) {
+    if (!gpu_texture) {
         unsigned cache_idx =
             surf_range_cache_index(texture_vram_offset, texture_length);
         typeof(r->tex_surf_range_cache[0]) *range_ent =
@@ -2196,7 +2363,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         NV2A_VK_DPRINTF("Cache hit");
         r->texture_bindings[texture_idx] = snode;
         possibly_dirty |= snode->possibly_dirty;
-        if (!surface_to_texture &&
+        if (!gpu_texture &&
             snode->dirty_check_frame == pg->frame_time) {
             possibly_dirty_checked = true;
             possibly_dirty |= snode->dirty_check_result;
@@ -2205,7 +2372,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         possibly_dirty = true;
     }
 
-    if (!surface_to_texture && !possibly_dirty_checked) {
+    if (!gpu_texture && !possibly_dirty_checked) {
         bool skip_dirty_check = binding_found &&
             snode->dirty_check_frame == pg->frame_time &&
             !snode->dirty_check_result;
@@ -2226,7 +2393,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         }
     }
 
-    if (binding_found && possibly_dirty && !surface_to_texture) {
+    if (binding_found && possibly_dirty && !gpu_texture) {
         bool vram_confirmed_clean =
             snode->dirty_check_frame == pg->frame_time &&
             !snode->dirty_check_result;
@@ -2246,10 +2413,11 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
      * texture by briefly making it a linear render target (upstream PR
      * #3064).
      */
-    bool was_surface_copy = binding_found && snode->draw_time;
+    bool was_surface_copy = binding_found &&
+        (snode->draw_time || snode->cube_surface_copy);
 
     uint64_t content_hash = 0;
-    if (!surface_to_texture && (was_surface_copy || possibly_dirty)) {
+    if (!gpu_texture && (was_surface_copy || possibly_dirty)) {
         int64_t hash_start = nv2a_stall_start();
         content_hash = fast_hash(texture_data, texture_length);
         if (is_indexed) {
@@ -2261,7 +2429,9 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
     if (binding_found) {
         bool did_s2t_copy = false;
         bool did_upload = false;
-        if (surface_to_texture) {
+        if (cube_to_texture) {
+            copy_cube_surfaces_to_texture(pg, cube_sources, snode);
+        } else if (surface_to_texture) {
             if (surface->draw_time != snode->draw_time) {
                 if (snode->submit_time + r->num_active_frames > r->submit_count) {
                     int64_t wait_start = nv2a_stall_start();
@@ -2327,6 +2497,8 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
                 upload_texture_image(pg, texture_idx, snode);
                 snode->hash = content_hash;
                 snode->draw_time = 0;
+                snode->cube_surface_copy = false;
+                snode->cube_copy_cache.valid = false;
                 did_upload = true;
             }
             snode->possibly_dirty = false;
@@ -2659,7 +2831,9 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
 
     r->texture_bindings[texture_idx] = snode;
 
-    if (surface_to_texture) {
+    if (cube_to_texture) {
+        copy_cube_surfaces_to_texture(pg, cube_sources, snode);
+    } else if (surface_to_texture) {
         bool can_direct_bind = can_bind_surface_direct(r, surface);
 
         if (can_direct_bind) {
@@ -2856,6 +3030,10 @@ static void texture_cache_entry_init(Lru *lru, LruNode *node, const void *state)
     snode->sampler = VK_NULL_HANDLE;
     memset(snode->upload_views, 0, sizeof(snode->upload_views));
     snode->submit_time = 0;
+    snode->cube_surface_copy = false;
+    snode->cube_copy_cache.valid = false;
+    snode->cube_seen_draw_gen = 0;
+    snode->cube_seen_list_gen = 0;
     snode->dirty_check_frame = 0;
     snode->dirty_check_result = false;
     snode->seq = ++r->texture_binding_seq;

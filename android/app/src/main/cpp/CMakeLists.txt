@@ -1283,6 +1283,19 @@ target_include_directories(test-texture-upload PRIVATE "${REPO_ROOT}")
 target_compile_options(test-texture-upload PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_link_libraries(test-texture-upload PRIVATE vulkan)
 
+add_executable(test-cubemap-copy-policy EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-cubemap-copy-policy.c"
+)
+target_include_directories(test-cubemap-copy-policy PRIVATE "${REPO_ROOT}")
+target_compile_options(test-cubemap-copy-policy PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
+add_executable(test-cubemap-copy-vk EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-cubemap-copy-vk.c"
+)
+target_include_directories(test-cubemap-copy-vk PRIVATE "${REPO_ROOT}")
+target_compile_options(test-cubemap-copy-vk PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_link_libraries(test-cubemap-copy-vk PRIVATE vulkan)
+
 add_library(slirp_static STATIC
   ${LIBSLIRP_SOURCES}
 )

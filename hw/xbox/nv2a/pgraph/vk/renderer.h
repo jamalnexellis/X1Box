@@ -23,6 +23,7 @@
 #include "qemu/osdep.h"
 #include "qemu/thread.h"
 #include "present-reuse.h"
+#include "cubemap-copy.h"
 #include "qemu/queue.h"
 #include "qemu/lru.h"
 #include "hw/hw.h"
@@ -748,6 +749,9 @@ typedef struct TextureBinding {
     uint64_t hash;
     unsigned int draw_time;
     uint32_t submit_time;
+    bool cube_surface_copy;
+    VkCubeCopyCache cube_copy_cache;
+    uint32_t cube_seen_draw_gen, cube_seen_list_gen;
     unsigned int dirty_check_frame;
     bool dirty_check_result;
     /* Monotonic creation id: tells a recreated texture apart from the one

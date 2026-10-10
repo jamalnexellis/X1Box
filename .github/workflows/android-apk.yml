@@ -70,8 +70,18 @@ jobs:
       - name: Install native build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config glslang-tools libvulkan-dev
+          sudo apt-get install -y meson ninja-build pkg-config glslang-tools libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
           rustup target add aarch64-linux-android --toolchain stable
+      - name: Test six-face cubemap eligibility and refresh
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I. android/test/cpp/test-cubemap-copy-policy.c -o /tmp/test-cubemap-copy-policy
+          /tmp/test-cubemap-copy-policy
+      - name: Test production cubemap GPU copies with synchronization validation
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I. android/test/cpp/test-cubemap-copy-vk.c -lvulkan -o /tmp/test-cubemap-copy-vk
+          task_vulkan_icd=$(find /usr/share/vulkan/icd.d -name '*lvp*' -print -quit)
+          test -n "$task_vulkan_icd"
+          VK_ICD_FILENAMES="$task_vulkan_icd" XEMU_TEST_VALIDATE=1 /tmp/test-cubemap-copy-vk
       - name: Check texture GPU test compilation
         run: cc -std=c11 -Wall -Wextra -Werror -I. -c android/test/cpp/test-texture-upload.c -o /tmp/test-texture-upload.o
       - name: Install Android toolchain
@@ -88,7 +98,7 @@ jobs:
         run: |
           native_build=$(find android/app/.cxx -path '*/arm64-v8a/build.ninja' -print -quit)
           test -n "$native_build"
-          "$ANDROID_HOME/cmake/3.22.1/bin/cmake" --build "$(dirname "$native_build")" --target test-coroutine-android test-xiso-media test-uniform-copy test-texture-upload --parallel 2
+          "$ANDROID_HOME/cmake/3.22.1/bin/cmake" --build "$(dirname "$native_build")" --target test-coroutine-android test-xiso-media test-uniform-copy test-texture-upload test-cubemap-copy-policy test-cubemap-copy-vk --parallel 2
           mkdir -p android/app/build/outputs/native-tests
           native_test=$(find android/app -type f -name test-coroutine-android -print -quit)
           test -n "$native_test"
@@ -102,6 +112,11 @@ jobs:
           upload_test=$(find android/app -type f -name test-texture-upload -print -quit)
           test -n "$upload_test"
           cp "$upload_test" android/app/build/outputs/native-tests/
+          for test_name in test-cubemap-copy-policy test-cubemap-copy-vk; do
+            test_path=$(find android/app -type f -name "$test_name" -print -quit)
+            test -n "$test_path"
+            cp "$test_path" android/app/build/outputs/native-tests/
+          done
           python3 - <<'PY'
           import ast, pathlib, re
           header = pathlib.Path('hw/xbox/nv2a/pgraph/vk/texture-upload.h').read_text().split('static inline')[0]
