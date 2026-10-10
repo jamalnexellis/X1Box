@@ -1100,3 +1100,26 @@ face five across separately queued command buffers without a host wait between
 them. CI runs it on software Vulkan with synchronization validation and also
 builds the Android executable for the actual driver. CI/artifact checks and
 device graphics/FPS validation remain pending; no gain is accepted yet.
+
+Source `cf22d4b38c854ad61cf093110591857aa47b9a22` passes
+[CI run 38076325568](https://github.com/jamalnexellis/X1Box/actions/runs/38076325568).
+The policy fixture passes ASan/UBSan and the production GPU-copy fixture passes
+on llvmpipe with synchronization validation, including both sizes and a queued
+replacement of face five. Android compilation also passes. The downloaded
+package `com.izzy2lost.x1box.dev`, version `1.2.9-pgr2-perf20` (49), has SHA-256
+`70057006bd657924f6030ac02d04540e1441b3a42a84f2eef05a20650d86ce3d`.
+It matches CI's checksum and retains the earlier signer certificate identity;
+native experiment, engagement and detail strings are present. These checks
+do not establish full APK signature validation, Adreno pixels or FPS gains.
+
+The APK artifact initially omits the two new, successfully compiled fixture
+binaries from its upload list. The list is corrected and the unchanged test
+sources are independently compiled for Android in
+[fixture run 38077176901](https://github.com/jamalnexellis/X1Box/actions/runs/38077176901).
+Both downloaded binaries are AArch64 ELF files with verified CI checksums.
+A fresh seven-minute capture is prepared to execute these generated-pixel
+fixtures on the device, capture the candidate while driving, then compare
+four identical stationary states in off/on/on/off order with profiling off.
+Current app-owned data and all ten properties, including the new experiment,
+are preserved and independently verified after restoration. Fresh phone
+availability and actual-device validation remain pending.
