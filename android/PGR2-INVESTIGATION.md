@@ -1336,3 +1336,26 @@ production format predicate also rejects unsupported and mixed-size pairs.
 Host synchronization validation, Android compilation and new artifact/device
 checks are pending. Prior transfer reads do not cover every shader-reader
 scenario. This is a targeted candidate, not a demonstrated FPS improvement.
+
+Source `a316bbbd692ddc73820a0ad1a52ea5398fae2fa0` succeeds in
+[APK CI run 38094774704](https://github.com/jamalnexellis/X1Box/actions/runs/38094774704)
+and [standalone Android fixture run 38094774552](https://github.com/jamalnexellis/X1Box/actions/runs/38094774552).
+The host policy/regression tests, byte-exact mixed-format fixture and software
+driver synchronization validation pass. The downloaded APK (52,
+`1.2.9-pgr2-perf23`) is 35,688,821 bytes with SHA-256
+`683654d51b296f6306a5a643211bbab6bd6ddcbd33f6566e8d9af92618bf1fde`.
+CI checksum, manifest/package, native engagement/format diagnostics,
+43-phase/fence coverage and prior certificate identity match. Certificate
+inspection does not verify the entire APK content signature. Standalone
+Android AARCH64/PIE fixtures match their CI checksums. Neither perf23 Android
+installation, actual Adreno mixed-format output nor game FPS is checked yet.
+
+The next guarded seven-minute test requires fresh phone availability and
+preserves current state and all eleven properties. It first tests the generated
+mixed-format fixtures on the Adreno, then captures an opt-in two-slot movement
+trace and checks actual BGRA8-to-RGBA8 1280x480 engagement and host-wait bypass.
+The profile-off comparison isolates only the surface queue property, off/on/on/off,
+with two slots and cube copy on throughout. This retains an experimental cube
+baseline; it does not compare against stock. Three full five-second windows
+per capture, all eleven reviewed images, runtime/input/mode checks and exact
+current archive/HDD/EEPROM/property/app-UID restoration remain required.
