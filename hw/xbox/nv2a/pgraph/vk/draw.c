@@ -2839,9 +2839,22 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
             r->frame_enqueued[next_frame] = false;
 
             if (qatomic_read(&r->frame_submitted[next_frame])) {
+                /* This wait is nested inside FINISH_WAIT. Keep it in the
+                 * existing fence phase so frame-slot recycling can be
+                 * distinguished from the CPU cleanup/propagation below. */
+                int64_t slot_fence_start = nv2a_stall_start();
                 VK_CHECK(vkWaitForFences(r->device, 1,
                                          &r->frame_fences[next_frame],
                                          VK_TRUE, UINT64_MAX));
+                nv2a_stall_record(NV2A_STALL_GPU_FENCE, slot_fence_start, 0);
+#ifdef __ANDROID__
+                static int slot_fence_timing_logged;
+                if (slot_fence_start &&
+                    qatomic_cmpxchg(&slot_fence_timing_logged, 0, 1) == 0) {
+                    __android_log_print(ANDROID_LOG_INFO, "xemu-stall-detail",
+                        "frame-slot recycling fence timing enabled schema=43");
+                }
+#endif
                 gpu_ts_readback(r, next_frame);
                 qatomic_set(&r->frame_submitted[next_frame], false);
 

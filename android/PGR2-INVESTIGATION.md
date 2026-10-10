@@ -1123,3 +1123,47 @@ four identical stationary states in off/on/on/off order with profiling off.
 Current app-owned data and all ten properties, including the new experiment,
 are preserved and independently verified after restoration. Fresh phone
 availability and actual-device validation remain pending.
+
+The fresh perf20 session loses its mDNS transport before any phone mutation.
+Reconnecting the known paired device allows a shorter diagnostic and one off/on
+comparison within the original seven-minute deadline. Both generated-data native
+fixtures pass on Adreno 830, including exact six-layer pixels at both sizes and
+queued replacement of one face. This device run has no validation layer enabled;
+the synchronization-validation result remains the earlier software-driver test.
+Android accepts the perf20 update and the runtime confirms the copy actually
+engages. All seven captures are reviewed: the initial/stationary states have
+neutral controls and coherent buildings, road, car and HUD; the movement capture
+shows 91 km/h and new scenery. This checks resume and accelerator input, not
+every control or the whole game.
+
+The diagnostic joins 540 complete flips in its marked segments. Initial has
+256 (median 60.680 ms, p95 70.829 ms, maximum 94.011 ms); movement has 284
+(median 68.634 ms, p95 99.722 ms, maximum 130.760 ms). Surface-download,
+texture-range fallback and CPU-access readback categories all count zero in
+both segments. Movement's copy/upload recording averages 0.537 ms per flip;
+shader compilation stays zero and pipeline creation peaks at 26.715 ms.
+However, `finish_wait` still accounts for 7,556.449 ms, averaging 26.607 ms
+per moving flip. Its scope includes recycling the next submission slot's GPU
+fence, framebuffer/staging cleanup and vertex RAM propagation. Previous fence
+instrumentation omits that slot fence, so the existing aggregate does not yet
+distinguish these contributions or establish pure GPU work time.
+
+With profiling off, three complete five-second windows per mode give
+217 flips / 15,117 ms = 14.355 FPS off and 221 / 15,083 ms = 14.652 FPS on.
+The observed difference is about 2.1%; a single pair, AI traffic, cache history
+and timing variation do not establish repeatable improvement. Thermal status
+reports zero. The originally empty ten properties, archive, HDD, EEPROM and
+ownership are independently verified after restoring current app-owned state.
+The emulator is stopped and the phone released before the deadline. The
+experimental copy remains off by default; no large performance gain is claimed.
+
+## Measuring the remaining slot-recycling wait (perf21)
+
+Perf21 records the missing next-slot `vkWaitForFences` in the existing
+`gpu_fence` phase. It remains nested inside `finish_wait`; overlapping phases
+must not be added or called GPU execution time. A one-time opt-in message
+identifies the revised coverage. The 43-phase schema, submission order,
+fence waits, resource lifetimes and cubemap defaults are unchanged. Profiling
+off takes no timestamp or extra log. This diagnostic will separate fence
+waiting from the remaining CPU work before changing scheduling. CI, artifact
+checks and a fresh guarded capture are pending.
