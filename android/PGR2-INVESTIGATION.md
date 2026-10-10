@@ -2,7 +2,8 @@
 
 Base: official X1 BOX tag `1.2.9` (`dadced00cea8bcbada5a5650541cc5bac3cc93f4`).
 Development application ID: `com.izzy2lost.x1box.dev`.
-Latest tested startup and performance build: `1.2.9-pgr2-perf7`.
+Latest phone startup build: `1.2.9-pgr2-perf8`.
+Its GPU upload code is unchanged from pixel-tested `1.2.9-pgr2-perf7`.
 
 ## Reproduced startup cause and correction
 
@@ -190,68 +191,101 @@ on the same GPU with the `perf4` executable.
 The upload diagnostic measures command recording, views, descriptors and image
 barriers only. It excludes CPU decoding, staging copies and waits, so a smaller
 reported upload time must not be presented as the same percentage gain in FPS.
-Initial `perf3` captures contain controller input during the comparison and are
-excluded from quantitative FPS claims. The repeat explicitly refreshes trigger
-and stick release states after restoring the VM snapshot, then measures without
-controller input in the timed window. The `perf4` comparison still shows most
-dynamic upload bytes on the transfer path and no clear FPS improvement. A menu
-was opened before the end of one capture, so paused time cannot be counted as
-gameplay. The uninterrupted `perf5` pair at a stationary Florence scene gives
-12.571 FPS with transfers and 11.960 FPS with compute uploads. These are four
-complete five-second windows per run, excluding snapshot restore and scripted
-controller reset. Both runs finish at 0 km/h with coherent road, buildings and
-HUD. Neither reports Android thermal throttling. The transfer path still
-records 338.2 MB / 919.85 ms; compute leaves 241.6 MB / 699.11 ms in transfers
-and records 48.6 MB / 4.98 ms of compute uploads. The repeat therefore does
-not establish an FPS gain. Repeated last-upload samples identify RGB565
-256x256; their byte totals suggest cubemaps, which perf6 explicitly covers
-and includes in the diagnostic metadata. Perf6 confirms those repeated uploads
-are RGB565 cubemaps with one mip. All sixteen size/mip/face fixtures, three
-writes per image, all 65,536 RGB565 words, BGRA/forced-alpha sampling and raw
-image-copy comparisons pass on the Adreno 830. The uninterrupted perf6 pair
-reports 12.180 FPS with transfers versus 12.051 FPS with compute. It processes
-the same 338.2 MB: transfer command recording takes 888.43 ms, versus 16.22 ms
-for 338.1 MB of compute and 0.13 ms for the remaining 0.1 MB of transfers.
-This removes the measured upload recording hotspot but still does not improve
-the measured frame rate. Both end captures show the same stationary car with
-coherent buildings, road and HUD, and thermal status remains 0.
 
-A subsequent 15-second sampling profile is separate from the FPS captures.
-The guest CPU thread accounts for 64.69% of sampled CPU cycles; the graphics
-FIFO thread accounts for 21.19%. CPU-cycle proportions alone do not establish
-the frame's critical path. The graphics profile now places 11.65% of its
-cycles in surface-to-texture image copies, mostly driver allocation in
-vkCmdCopyImage. Forcing the existing direct-surface diagnostic path does not
-establish a gain either (11.908 FPS in the short stationary repeat), and the
-property is restored to its original empty value. Its mobile-driver workaround
-remains enabled. Perf7 enables the existing native ThinLTO build option for the
-development APK and disables NV2A_PERF_LOG, removing phase timers, optimization
-counters and per-render-pass GPU timestamp queries. The existing flip-based
-FPS measurement remains available. Floating-point precision and runtime
-settings are unchanged. All eighteen GPU comparisons, uniform packing,
-1,000 coroutine migrations and the real PGR 2 image test pass with the perf7
-executables on the same device. The real-image test still verifies that the
-original disc byte is unchanged. The signing key is restored from CI's explicit
-cache; perf6/perf7 updates and the diagnostic downgrade preserve app data and
-the existing SAF grant.
+### Withdrawn phone measurements and recovered controls
 
-The consecutive perf7/perf6 comparison uses the same snapshot and input reset,
-compute uploads enabled, no sampling profiler and no user input. Four complete
-five-second windows report 12.506 FPS for perf7 and 12.251 FPS for perf6.
-The nominal 2.1% difference in this short pair does not establish a repeatable
-performance improvement or resolved cold-rendering stalls. Both end captures
-show the same stationary scene with coherent buildings, road, car and HUD;
-Android thermal status remains 0. This comparison excludes the first five
-seconds following snapshot load and input reset, so it does not quantify the
-initial restore hitch. Perf7 intentionally omits the upload profiling counters;
-the separate perf6 transfer/compute comparison above measures their cost.
+The previously reported perf4–perf7 phone FPS comparisons are withdrawn.
+Inspection prompted by the user's report of completely unresponsive controls
+finds that the external app working directory belonged to the ADB shell after
+restoration. The app could not write xemu.toml or access its EEPROM normally.
+Its logs record failed configuration writes, failed EEPROM generation,
+autostart disabled and a snapshot restore error for missing `smbus-storage`.
+The partially restored machine could render a race even though its hardware
+and settings did not match the snapshot. It also used default fp_jit=true and
+TCG cache size 128, despite the requested fp_jit=false and cache size 256.
+A rendered image alone therefore did not validate these sessions.
 
-The final phone installation is perf7. A fresh backup taken before this pair
-is restored afterward, including private HDD/snapshots, shader cache, preferences
-and the app-owned EEPROM. Debug logging is disabled again. Temporary compute
-and direct-surface properties are cleared to their original empty values, and
-USB stay-awake returns to its original value of 0. The slowdown remains an open
-issue; no full-speed or maximum-FPS claim is made.
+The repair preserves the old external directory for recovery and recreates
+the working directory and unchanged EEPROM through the app's own UID. A new
+launch writes the configuration, reports fp_jit=0 and tb-size=256, connects
+the virtual controller to port 1 and restores the race without the previous
+errors. The user explicitly confirms that touch controls respond again.
+No change to the touch-control source or mapping was required. Future phone
+restore commands must create these files through run-as, rather than creating
+shell-owned files in the app's external working directory.
+
+The standalone GPU comparisons remain valid: their executables do not depend
+on the broken emulator session. The old command-recording counters show the
+upload code executing, but must not establish a valid-session frame-rate gain.
+The previous CPU profile from that session is also superseded. Perf8 aborts
+startup with a visible error if creating or writing/flushing/closing the
+configuration fails, instead of launching hardware with unintended defaults.
+
+### Valid-session CPU profile
+
+A separate 15-second CPU-cycle profile follows a verified configuration,
+EEPROM, controller binding and successful snapshot restore. It records
+180,127 samples with none lost. The emulated CPU thread accounts for 50.34%
+of sampled CPU cycles; the graphics FIFO thread accounts for 27.29%.
+These are shares of sampled CPU work, not GPU utilization, waiting time or
+proof of the complete frame's critical path. Generated guest code cannot
+be fully attributed from the normal call graph. Among attributable CPU
+functions, execution/dispatch of translated blocks dominates; code generation
+is a smaller contribution during this warmed scene.
+
+The graphics profile places 17.47% of that thread's cycles in
+copy_surface_to_texture, predominantly Adreno driver allocation/ioctl calls
+inside vkCmdCopyImage. The CPU thread's samples are almost entirely on cores
+6–7: 54,604 samples and 26,159,522,586 cycles, versus 41 samples and 3,501,584
+cycles on cores 0–5. The device reports maximum frequencies 4,473,600 kHz
+for cores 6–7 and 3,532,800 kHz for cores 0–5. This does not support a claim
+that Android is assigning the CPU emulation mainly to slower cores.
+
+Initial valid perf7 diagnostic runs pass the configuration/EEPROM/controller checks,
+but the car moves during their preparation and timed windows. A longer LT
+hold also selects reverse after braking. They do not establish a paired FPS
+gain for uploads or direct-surface binding. The direct-surface diagnostic is
+restored to its original empty value; the mobile-driver workaround remains.
+The subsequent perf8 comparison below saves a stationary, neutral-input state
+and validates both the beginning and end of every accepted capture.
+Shader compilation and first-frame texture stalls remain to be separately
+measured. The slowdown is unresolved; no full-speed or maximum-FPS claim is
+made.
+
+### Stationary race comparison after restoring controls
+
+Perf8 is compared with compute texture uploads forced off and on using the
+diagnostic property on the same APK. Each run opens a fresh process, restores
+the same private HDD and stopped-car snapshot and restores the same SPIR-V,
+shader-module-key and Vulkan pipeline caches. The snapshot starts in PGR2's
+pause menu; a complete touch A press/release resumes the race before timing.
+No driving input follows. All accepted beginning and end screenshots show
+0 km/h, the same car position and coherent road, buildings and HUD.
+
+Each capture lasts 40 seconds. Only complete five-second FPS windows starting
+at least five seconds after the measurement marker are included. There are
+six accepted windows in each run. This is a stationary race throughput test
+with populated disk shader caches; it does not quantify first-frame texture
+stalls or shader compilation latency.
+
+| Upload route | First accepted run | Repeat |
+| --- | ---: | ---: |
+| Buffer/image transfers | 13.123 FPS | 13.004 FPS |
+| Compute uploads | 14.293 FPS | 14.375 FPS |
+
+The accepted order is transfer, compute, compute, transfer. The aggregate
+counts are 790 flips in 60,474 ms for transfers and 866 flips in 60,416 ms for
+compute: 13.063 versus 14.334 FPS, approximately 9.7% higher in this scene.
+The compute logs confirm that RGBA8 and RGB565 paths are enabled; all runs
+verify fp_jit=0, TCG cache size 256, controller binding and no configuration,
+EEPROM or snapshot errors. Android thermal status remains 0 throughout the
+accepted runs; this alone does not prove constant CPU/GPU clocks.
+
+A setup capture still in the game's pause menu is excluded. A transfer repeat
+overlapping an ADB backup download is also excluded and replaced with a clean
+run. These results supersede the withdrawn older comparisons and establish
+a modest scene-specific upload-path gain. They are not a comparison between
+perf7 and perf8, whose upload code is identical, or a full-speed claim.
 
 ## Remaining compatibility work
 
@@ -279,7 +313,7 @@ after measurement, and the tested Vulkan settings retained. Temporary device
 profiling properties and USB stay-awake changes are restored. Firmware, EEPROM
 and HDD tests use isolated copies; the user's original files remain untouched.
 
-## Latest delivered binary
+## Pixel-tested GPU binary
 
 `perf7` source commit: `804d9072afc1cc86966f6267d29c4a14b6fe6ef3`.
 [Successful build and native test artifacts](https://github.com/jamalnexellis/X1Box/actions/runs/38008983718).
@@ -290,3 +324,34 @@ the original startup adaptation, uniform-copy optimization, pixel-tested GPU
 texture uploads, native ThinLTO and disabled rendering profiling overhead.
 Private phone backups, firmware, game images, logs and screenshots are not
 included in the repository or CI artifacts.
+
+## Latest delivered binary
+
+`perf8` source commit: `94cd6ecdeff656946b29e12bdf205ed027d29a82`.
+[Successful APK build](https://github.com/jamalnexellis/X1Box/actions/runs/38011029972).
+APK version: `1.2.9-pgr2-perf8`, version code 37.
+APK SHA-256: `daa660de7ff2c2c858585c0095d6ca74fde11c39ae46103f8762129f2f11c703`.
+The artifact checksum and delivered APK copy match. Updating the existing
+development package succeeds without uninstalling it or losing its data.
+
+A phone failure-injection test preserves the configuration file, temporarily
+replaces its path with an empty directory and launches the same game. Native
+logs record the expected configuration-write failure and startup abort; Android
+records the error dialog producing a frame. The QEMU core does not start.
+The test restores the original file through the app's UID even on failure.
+The initial UI assertion occurs after the dialog has already been dismissed;
+the full native/window log establishes that the dialog was rendered.
+
+Normal startup then writes and loads the intended configuration, opens the
+unchanged EEPROM and connects the controller to port 1. The game's intro
+renders and its race snapshot loads successfully. Touch Start pauses the game
+and touch A resumes it; coherent road, buildings and HUD are visible.
+The new configuration guard adds no claimed FPS improvement.
+
+After testing, the private HDD, original snapshot, shader caches and preferences
+are restored from the pre-measurement backup. The unchanged EEPROM is copied
+through the app's UID and its checksum is verified. The temporary Slot 2 preview
+is preserved outside the active snapshot directory; its benchmark HDD remains
+in a private backup. Diagnostic properties, debug logging and USB stay-awake
+settings are restored. The user's original game image and firmware/HDD files
+remain untouched.
