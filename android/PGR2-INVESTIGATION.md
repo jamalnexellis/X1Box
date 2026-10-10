@@ -2,7 +2,7 @@
 
 Base: official X1 BOX tag `1.2.9` (`dadced00cea8bcbada5a5650541cc5bac3cc93f4`).
 Development application ID: `com.izzy2lost.x1box.dev`.
-Startup and performance build: `1.2.9-pgr2-perf2`.
+Latest tested startup and performance build: `1.2.9-pgr2-perf7`.
 
 ## Reproduced startup cause and correction
 
@@ -136,6 +136,123 @@ disc access path differs from the private-file reference. The remaining speed
 problem is unresolved, despite less CPU work in the two targeted renderer paths.
 A single scene cannot establish maximum FPS for the entire game.
 
+## Cold texture upload investigation
+
+The next report concerns slowdown while textures are first rendered. A fresh
+process and a restored private race snapshot make the GPU texture cache cold;
+the existing disk shader cache is retained. This distinguishes texture upload
+from compiling every game shader again. The sampling profiler is not active
+during FPS comparisons.
+
+On the Adreno 830 system driver, a CPU call graph places most of the regular
+texture upload cost inside `vkCmdCopyBufferToImage`, including driver memory
+allocation and its kernel ioctl. `perf3` adds a compute upload for plain decoded
+RGBA8 textures. `perf4` also stores compatible BGRA byte streams in RGBA8 images
+and composes the sampling component map with a red/blue exchange. This retains
+the original byte stream, including forced alpha in XRGB textures; it does not
+reduce texture resolution or remove effects. Border-addressed BGRA remains on
+the original path because custom border colors with nonidentity views require
+an additional Vulkan feature. Volumes, virtual borders in swizzled
+textures and other formats also retain their original upload paths. `perf5`
+corrects the eligibility check for linear rectangles: their border-source flag
+does not expand the data, so it must not exclude an otherwise eligible upload.
+`perf6` extends the path to RGB565 and each face of a cubemap. RGB565 images
+retain their original sampled format and packed bits. A compatible R16_UINT
+storage view writes those bits without changing normalization, filtering,
+alpha, border color, or the raw surface-copy representation. Mutable format
+and extended usage are explicit, and each view restricts its usage to its
+role. This follows Vulkan's [format compatibility classes](https://docs.vulkan.org/spec/latest/chapters/formats.html#formats-compatibility-classes)
+and [extended usage rules](https://docs.vulkan.org/refpages/latest/refpages/source/VkImageCreateFlagBits.html).
+The RGB565 path requires enabled shaderStorageImageExtendedFormats, storage
+format support and supported image creation flags; otherwise it retains
+transfer uploads. Small 16-bit mip levels reserve four-byte aligned storage
+and initialize padding, so the last half-word read stays inside the allocation.
+Each cubemap face uses its own 2D storage view; barriers cover all mips and
+faces, and descriptor capacity accounting includes every face.
+
+The default is restricted to the pixel-tested Adreno 830 Qualcomm driver. The
+diagnostic property `debug.xemu.vk.compute_upload=0/1` permits comparison on one
+APK. Initialization checks storage-image support, the compute queue capability
+and the staging buffer range; failure preserves the original transfer path.
+Storage views use identity component mappings. Explicit image and host-buffer
+barriers separate reads and writes, and descriptor sets are recycled only after
+the existing completion synchronization. Cached texture updates retain their
+existing CPU waits.
+
+The standalone device test uses the production upload shader and helpers. It
+compares GPU readback byte for byte for five sizes, every mip, non-multiple
+workgroups, a nonzero staging offset and three writes to each image. All RGBA8
+cases pass on the SM-S938B. The expanded test additionally checks actual shader
+sampling of BGRA and forced-alpha views against independent byte expectations,
+including raw image copies in both directions. All of these comparisons pass
+on the same GPU with the `perf4` executable.
+
+The upload diagnostic measures command recording, views, descriptors and image
+barriers only. It excludes CPU decoding, staging copies and waits, so a smaller
+reported upload time must not be presented as the same percentage gain in FPS.
+Initial `perf3` captures contain controller input during the comparison and are
+excluded from quantitative FPS claims. The repeat explicitly refreshes trigger
+and stick release states after restoring the VM snapshot, then measures without
+controller input in the timed window. The `perf4` comparison still shows most
+dynamic upload bytes on the transfer path and no clear FPS improvement. A menu
+was opened before the end of one capture, so paused time cannot be counted as
+gameplay. The uninterrupted `perf5` pair at a stationary Florence scene gives
+12.571 FPS with transfers and 11.960 FPS with compute uploads. These are four
+complete five-second windows per run, excluding snapshot restore and scripted
+controller reset. Both runs finish at 0 km/h with coherent road, buildings and
+HUD. Neither reports Android thermal throttling. The transfer path still
+records 338.2 MB / 919.85 ms; compute leaves 241.6 MB / 699.11 ms in transfers
+and records 48.6 MB / 4.98 ms of compute uploads. The repeat therefore does
+not establish an FPS gain. Repeated last-upload samples identify RGB565
+256x256; their byte totals suggest cubemaps, which perf6 explicitly covers
+and includes in the diagnostic metadata. Perf6 confirms those repeated uploads
+are RGB565 cubemaps with one mip. All sixteen size/mip/face fixtures, three
+writes per image, all 65,536 RGB565 words, BGRA/forced-alpha sampling and raw
+image-copy comparisons pass on the Adreno 830. The uninterrupted perf6 pair
+reports 12.180 FPS with transfers versus 12.051 FPS with compute. It processes
+the same 338.2 MB: transfer command recording takes 888.43 ms, versus 16.22 ms
+for 338.1 MB of compute and 0.13 ms for the remaining 0.1 MB of transfers.
+This removes the measured upload recording hotspot but still does not improve
+the measured frame rate. Both end captures show the same stationary car with
+coherent buildings, road and HUD, and thermal status remains 0.
+
+A subsequent 15-second sampling profile is separate from the FPS captures.
+The guest CPU thread accounts for 64.69% of sampled CPU cycles; the graphics
+FIFO thread accounts for 21.19%. CPU-cycle proportions alone do not establish
+the frame's critical path. The graphics profile now places 11.65% of its
+cycles in surface-to-texture image copies, mostly driver allocation in
+vkCmdCopyImage. Forcing the existing direct-surface diagnostic path does not
+establish a gain either (11.908 FPS in the short stationary repeat), and the
+property is restored to its original empty value. Its mobile-driver workaround
+remains enabled. Perf7 enables the existing native ThinLTO build option for the
+development APK and disables NV2A_PERF_LOG, removing phase timers, optimization
+counters and per-render-pass GPU timestamp queries. The existing flip-based
+FPS measurement remains available. Floating-point precision and runtime
+settings are unchanged. All eighteen GPU comparisons, uniform packing,
+1,000 coroutine migrations and the real PGR 2 image test pass with the perf7
+executables on the same device. The real-image test still verifies that the
+original disc byte is unchanged. The signing key is restored from CI's explicit
+cache; perf6/perf7 updates and the diagnostic downgrade preserve app data and
+the existing SAF grant.
+
+The consecutive perf7/perf6 comparison uses the same snapshot and input reset,
+compute uploads enabled, no sampling profiler and no user input. Four complete
+five-second windows report 12.506 FPS for perf7 and 12.251 FPS for perf6.
+The nominal 2.1% difference in this short pair does not establish a repeatable
+performance improvement or resolved cold-rendering stalls. Both end captures
+show the same stationary scene with coherent buildings, road, car and HUD;
+Android thermal status remains 0. This comparison excludes the first five
+seconds following snapshot load and input reset, so it does not quantify the
+initial restore hitch. Perf7 intentionally omits the upload profiling counters;
+the separate perf6 transfer/compute comparison above measures their cost.
+
+The final phone installation is perf7. A fresh backup taken before this pair
+is restored afterward, including private HDD/snapshots, shader cache, preferences
+and the app-owned EEPROM. Debug logging is disabled again. Temporary compute
+and direct-surface properties are cleared to their original empty values, and
+USB stay-awake returns to its original value of 0. The slowdown remains an open
+issue; no full-speed or maximum-FPS claim is made.
+
 ## Remaining compatibility work
 
 The user reported intermittent building, road and menu corruption and confirmed
@@ -150,7 +267,7 @@ and [intermittent menu corruption](https://github.com/xemu-project/xemu/issues/2
 The lock-free fence polling optimization from upstream PR #2941 is already in
 the official X1 BOX 1.2.9 base; it is not a new correction in this fork.
 
-## Delivered binary
+## Previously delivered binary
 
 `perf2` source commit: `1ba08e1a1983fe9bb05cd0574baf1668ec42080f`.
 [Successful build and native test artifacts](https://github.com/jamalnexellis/X1Box/actions/runs/37998447457).
@@ -161,3 +278,15 @@ The installed app has its SAF game folder configured, debug logging disabled
 after measurement, and the tested Vulkan settings retained. Temporary device
 profiling properties and USB stay-awake changes are restored. Firmware, EEPROM
 and HDD tests use isolated copies; the user's original files remain untouched.
+
+## Latest delivered binary
+
+`perf7` source commit: `804d9072afc1cc86966f6267d29c4a14b6fe6ef3`.
+[Successful build and native test artifacts](https://github.com/jamalnexellis/X1Box/actions/runs/38008983718).
+APK version: `1.2.9-pgr2-perf7`, version code 36.
+APK SHA-256: `50924571fe99695bbcef12ab8c3c0f7d8912e323b969e70fd8b04f8ae877332e`.
+The artifact checksum and the delivered APK copy match. This binary includes
+the original startup adaptation, uniform-copy optimization, pixel-tested GPU
+texture uploads, native ThinLTO and disabled rendering profiling overhead.
+Private phone backups, firmware, game images, logs and screenshots are not
+included in the repository or CI artifacts.
