@@ -20,8 +20,65 @@
  */
 
 #include "apu_int.h"
+#ifdef __ANDROID__
+#include "qemu/error-report.h"
+#endif
 
 MCPXAPUState *g_state; // Used via debug handlers
+
+#ifdef __ANDROID__
+/* Not snapshot state. A fresh process starts with tracing off. Arm only while
+ * the guest is stopped through the opt-in loopback debugger. */
+static uint64_t diagnostic_word;
+static int diagnostic_writes_left;
+
+bool mcpx_apu_debug_watch_word(uint64_t physical_address)
+{
+    MCPXAPUState *d = g_state;
+
+    if (!d || !d->ram_ptr || (physical_address & 3) ||
+        physical_address > d->ram_size ||
+        d->ram_size - physical_address < sizeof(uint32_t)) {
+        return false;
+    }
+    qatomic_set(&diagnostic_writes_left, 0);
+    qatomic_set(&diagnostic_word, physical_address);
+    qatomic_store_release(&diagnostic_writes_left, 16);
+    return true;
+}
+
+void mcpx_apu_debug_unwatch_word(void)
+{
+    qatomic_set(&diagnostic_writes_left, 0);
+}
+
+void mcpx_apu_debug_trace_dma(uint64_t physical_address, const uint8_t *source,
+                             size_t length, const char *producer)
+{
+    int left = qatomic_load_acquire(&diagnostic_writes_left);
+    uint64_t word;
+
+    if (likely(left <= 0)) {
+        return;
+    }
+    word = qatomic_read(&diagnostic_word);
+    if (length < sizeof(uint32_t) || word < physical_address ||
+        word - physical_address > length - sizeof(uint32_t)) {
+        return;
+    }
+    while (left > 0) {
+        int observed = qatomic_cmpxchg(&diagnostic_writes_left, left, left - 1);
+        if (observed == left) {
+            /* Read the bytes already submitted by DMA, not adjacent guest RAM
+             * or MMIO. The diagnostic does not acknowledge the command itself. */
+            error_report("APU RAM write producer=%s value=0x%08x",
+                         producer, ldl_le_p(source + word - physical_address));
+            return;
+        }
+        left = observed;
+    }
+}
+#endif
 
 static void update_irq(MCPXAPUState *d)
 {

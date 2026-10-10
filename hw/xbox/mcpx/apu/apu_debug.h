@@ -21,6 +21,7 @@
 #define MCPX_APU_DEBUG_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define MAX_VOICE_WORKERS 16
@@ -92,6 +93,14 @@ void mcpx_apu_debug_toggle_mute(uint16_t v);
 bool mcpx_apu_debug_is_muted(uint16_t v);
 void mcpx_apu_debug_set_gp_realtime_enabled(bool enable);
 void mcpx_apu_debug_set_ep_realtime_enabled(bool enable);
+
+#ifdef __ANDROID__
+/* Opt-in, bounded RAM-writer diagnostic; no guest memory is changed. */
+bool mcpx_apu_debug_watch_word(uint64_t physical_address);
+void mcpx_apu_debug_unwatch_word(void);
+void mcpx_apu_debug_trace_dma(uint64_t physical_address, const uint8_t *source,
+                             size_t length, const char *producer);
+#endif
 
 #ifdef __cplusplus
 }

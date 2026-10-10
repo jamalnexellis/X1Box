@@ -50,11 +50,15 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
 
 static void scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
                               unsigned int max_sge, uint8_t *ptr, uint32_t addr,
-                              size_t len, bool dir)
+                              size_t len, bool dir, const char *producer)
 {
     unsigned int page_entry = addr / TARGET_PAGE_SIZE;
     unsigned int offset_in_page = addr % TARGET_PAGE_SIZE;
     unsigned int bytes_to_copy = TARGET_PAGE_SIZE - offset_in_page;
+
+#ifndef __ANDROID__
+    (void)producer;
+#endif
 
     while (len > 0) {
         if (page_entry > max_sge) {
@@ -81,6 +85,9 @@ static void scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
         if (dir) {
             memcpy(&d->ram_ptr[paddr], ptr, bytes_to_copy);
             memory_region_set_dirty(d->ram, paddr, bytes_to_copy);
+#ifdef __ANDROID__
+            mcpx_apu_debug_trace_dma(paddr, ptr, bytes_to_copy, producer);
+#endif
         } else {
             memcpy(ptr, &d->ram_ptr[paddr], bytes_to_copy);
         }
@@ -101,7 +108,7 @@ static void gp_scratch_rw(void *opaque, uint8_t *ptr, uint32_t addr, size_t len,
     MCPXAPUState *d = opaque;
     // fprintf(stderr, "GP %s scratch 0x%x bytes (0x%x words) at %x (0x%x words)\n", dir ? "writing to" : "reading from", len, len/4, addr, addr/4);
     scatter_gather_rw(d, d->regs[NV_PAPU_GPSADDR], d->regs[NV_PAPU_GPSMAXSGE],
-                      ptr, addr, len, dir);
+                      ptr, addr, len, dir, "gp-scratch");
 }
 
 static void ep_scratch_rw(void *opaque, uint8_t *ptr, uint32_t addr, size_t len,
@@ -110,13 +117,14 @@ static void ep_scratch_rw(void *opaque, uint8_t *ptr, uint32_t addr, size_t len,
     MCPXAPUState *d = opaque;
     // fprintf(stderr, "EP %s scratch 0x%x bytes (0x%x words) at %x (0x%x words)\n", dir ? "writing to" : "reading from", len, len/4, addr, addr/4);
     scatter_gather_rw(d, d->regs[NV_PAPU_EPSADDR], d->regs[NV_PAPU_EPSMAXSGE],
-                      ptr, addr, len, dir);
+                      ptr, addr, len, dir, "ep-scratch");
 }
 
 static uint32_t circular_scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
                                            unsigned int max_sge, uint8_t *ptr,
                                            uint32_t base, uint32_t end,
-                                           uint32_t cur, size_t len, bool dir)
+                                           uint32_t cur, size_t len, bool dir,
+                                           const char *producer)
 {
     while (len > 0) {
         unsigned int bytes_to_copy = end - cur;
@@ -130,7 +138,8 @@ static uint32_t circular_scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
                 dir ? "write" : "read", base, end, cur, bytes_to_copy, len);
 
         assert((cur >= base) && ((cur + bytes_to_copy) <= end));
-        scatter_gather_rw(d, sge_base, max_sge, ptr, cur, bytes_to_copy, dir);
+        scatter_gather_rw(d, sge_base, max_sge, ptr, cur, bytes_to_copy, dir,
+                          producer);
 
         ptr += bytes_to_copy;
         len -= bytes_to_copy;
@@ -183,7 +192,7 @@ static void gp_fifo_rw(void *opaque, uint8_t *ptr, unsigned int index,
 
     cur = circular_scatter_gather_rw(d,
         d->regs[NV_PAPU_GPFADDR], d->regs[NV_PAPU_GPFMAXSGE],
-        ptr, base, end, cur, len, dir);
+        ptr, base, end, cur, len, dir, "gp-fifo");
 
     SET_MASK(d->regs[cur_reg], NV_PAPU_GPOFCUR0_VALUE, cur);
 }
@@ -249,7 +258,7 @@ static void ep_fifo_rw(void *opaque, uint8_t *ptr, unsigned int index,
 
     cur = circular_scatter_gather_rw(d,
         d->regs[NV_PAPU_EPFADDR], d->regs[NV_PAPU_EPFMAXSGE],
-        ptr, base, end, cur, len, dir);
+        ptr, base, end, cur, len, dir, "ep-fifo");
 
     SET_MASK(d->regs[cur_reg], NV_PAPU_GPOFCUR0_VALUE, cur);
 }

@@ -607,3 +607,25 @@ emulator is stopped. The downloaded archive checksum and the restored HDD and
 EEPROM checksums match this session's backup. EEPROM retains app ownership,
 all diagnostic properties match their pre-test values, and no ADB forward is
 left behind. Original game and firmware/HDD files remain untouched.
+
+## Bounded RAM-writer diagnostic (perf14)
+
+The wait word observed with perf12 has not yet been attributed to a producer.
+The private executable's surrounding buffer protocol suggests an APU command
+mailbox, but that is an unconfirmed hypothesis. Speeding up the polling loop
+has not demonstrated a material frame-rate improvement.
+
+Perf14 adds two minimal Android HMP commands reachable through the opt-in
+loopback guest debugger: `xemu-apu-watch` and `xemu-apu-unwatch`. While the guest
+is stopped, the watch command resolves the supplied aligned virtual word using
+the current CPU page tables and rejects unmapped or non-RAM targets. Tracing
+starts off in every process and is excluded from saved machine state.
+
+The APU DMA callbacks retain their original copying and dirty tracking. After
+each write, an armed diagnostic checks whether it contains the watched word.
+At most 16 matching writes record their APU producer and submitted value;
+only the already submitted four source bytes are inspected. The probe never
+acknowledges a command, bypasses a wait or changes DSP execution budgets.
+It covers GP/EP scratch and FIFO DMA, not all possible RAM writers, so an absent
+event would leave the dependency unresolved. Captures stay private and are
+excluded from FPS comparisons. Compilation and device validation are pending.
