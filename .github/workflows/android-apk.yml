@@ -63,6 +63,10 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -I. android/test/cpp/test-submission-ack.c -o /tmp/test-submission-ack
           /tmp/test-submission-ack
+      - name: Test native presentation reuse policy
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I. android/test/cpp/test-present-reuse.c -o /tmp/test-present-reuse
+          /tmp/test-present-reuse
       - name: Install native build tools
         run: |
           sudo apt-get update

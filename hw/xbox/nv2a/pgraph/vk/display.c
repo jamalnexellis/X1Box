@@ -879,6 +879,7 @@ static void destroy_current_display_image(PGRAPHState *pg)
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
     PGRAPHVkDisplayState *d = &r->display;
+    d->reuse_cache.valid = false;
 
 #ifdef __ANDROID__
     if (d->direct_present && d->swapchain != VK_NULL_HANDLE) {
@@ -2100,6 +2101,7 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
     uint32_t present_sync_index = 0;
 #ifdef __ANDROID__
     bool capture_this_frame = false;
+    bool present_success = false;
 #endif
 
 #ifdef __ANDROID__
@@ -2454,6 +2456,7 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
         int64_t present_start = nv2a_stall_start();
         VkResult present_result = vkQueuePresentKHR(r->queue, &present_info);
         nv2a_stall_record(NV2A_STALL_DISPLAY_PRESENT, present_start, 0);
+        present_success = present_result == VK_SUCCESS;
         if (present_result == VK_ERROR_OUT_OF_DATE_KHR) {
             __android_log_print(ANDROID_LOG_WARN, "hakuX-vk",
                                 "present: swapchain became out of date; "
@@ -2515,6 +2518,13 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
     nv2a_profile_inc_counter(NV2A_PROF_QUEUE_SUBMIT_5);
 
     disp->draw_time = surface->draw_time;
+#ifdef __ANDROID__
+    if (disp->direct_present && disp->reuse_identical_present) {
+        vk_present_reuse_commit(&disp->reuse_cache, &disp->reuse_candidate,
+                                qemu_clock_get_us(QEMU_CLOCK_REALTIME),
+                                present_success);
+    }
+#endif
 }
 
 static void create_surface_sampler(PGRAPHState *pg)
@@ -2639,5 +2649,43 @@ void pgraph_vk_render_display(PGRAPHState *pg)
         r->blend_after_skip = false;
     }
 
+#ifdef __ANDROID__
+    if (disp->direct_present && disp->reuse_identical_present) {
+        int64_t reuse_start = nv2a_stall_start();
+        VkPresentReuseKey key = {
+            .image = (uint64_t)surface->image,
+            .image_view = (uint64_t)surface->image_view,
+            .display_addr = display_addr,
+            .draw_time = surface->draw_time,
+            .draw_generation = surface->draw_generation,
+            .surface_list_gen = r->surface_list_gen,
+            .pitch = surface->pitch, .width = surface->width,
+            .height = surface->height,
+            .line_offset = vga_display_params.line_offset,
+            .display_width = disp->width, .display_height = disp->height,
+            .viewport_x = disp->present_viewport.offset.x,
+            .viewport_y = disp->present_viewport.offset.y,
+            .viewport_width = disp->present_viewport.extent.width,
+            .viewport_height = disp->present_viewport.extent.height,
+            .swapchain_width = disp->swapchain_extent.width,
+            .swapchain_height = disp->swapchain_extent.height,
+            .swapchain_format = disp->swapchain_format,
+        };
+        bool video_active = disp->pvideo.state.enabled ||
+            (d->pvideo.regs[NV_PVIDEO_BUFFER] & NV_PVIDEO_BUFFER_0_USE);
+        if (vk_present_can_reuse(&disp->reuse_cache, &key,
+                                qemu_clock_get_us(QEMU_CLOCK_REALTIME),
+                                surface->upload_pending, video_active,
+                                qatomic_read(&disp->capture.state) !=
+                                    DISPLAY_CAPTURE_IDLE)) {
+            nv2a_stall_record(NV2A_STALL_DISPLAY_REUSE, reuse_start, 0);
+            return;
+        }
+        /* An early return or failed presentation must never retain an old
+         * key. Commit a new key only after a successful queue presentation. */
+        disp->reuse_cache.valid = false;
+        disp->reuse_candidate = key;
+    }
+#endif
     render_display(pg, surface);
 }

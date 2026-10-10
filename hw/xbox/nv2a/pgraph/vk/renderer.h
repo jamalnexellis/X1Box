@@ -22,6 +22,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/thread.h"
+#include "present-reuse.h"
 #include "qemu/queue.h"
 #include "qemu/lru.h"
 #include "hw/hw.h"
@@ -835,6 +836,9 @@ typedef struct PGRAPHVkDisplayState {
     int render_idx;
     int display_idx;
     bool direct_present;
+    bool reuse_identical_present; /* Opt-in, latched before worker creation. */
+    VkPresentReuseCache reuse_cache;
+    VkPresentReuseKey reuse_candidate;
     VkSwapchainKHR swapchain;
     VkFormat swapchain_format;
     /* Format the display render pass was built for; framebuffers wrapping

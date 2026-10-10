@@ -40,7 +40,8 @@ static const char *const stall_phase_names[] = {
     "gpu_fence", "submit_ack", "display_acquire", "display_present",
     "display_fence", "finish_vertex", "finish_surface_create",
     "finish_surface_down", "finish_buffer_space", "finish_framebuffer",
-    "finish_presenting", "finish_flip", "finish_flush", "finish_stalled"
+    "finish_presenting", "finish_flip", "finish_flush", "finish_stalled",
+    "display_reuse"
 };
 
 void nv2a_stall_profile_init(void)

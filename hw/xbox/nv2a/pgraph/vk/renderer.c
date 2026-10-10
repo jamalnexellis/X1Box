@@ -26,6 +26,7 @@
 extern bool xemu_get_frame_skip(void);
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <sys/system_properties.h>
 #define DBG_LOG(...) __android_log_print(ANDROID_LOG_INFO, "hakuX-vk-dbg", __VA_ARGS__)
 #else
 #define DBG_LOG(...) fprintf(stderr, __VA_ARGS__)
@@ -168,6 +169,15 @@ static void pgraph_vk_init(NV2AState *d, Error **errp)
     pg->vk_renderer_state->nv2a = d;
     pg->vk_renderer_state->need_descriptor_rebind = true;
     pg->vk_renderer_state->deferred_downloads_frame = -1;
+#ifdef __ANDROID__
+    char present_reuse_property[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.vk.present_reuse", present_reuse_property);
+    pg->vk_renderer_state->display.reuse_identical_present =
+        strcmp(present_reuse_property, "1") == 0;
+    __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+                        "reuse identical native presentation=%d",
+                        pg->vk_renderer_state->display.reuse_identical_present);
+#endif
 
 #if HAVE_EXTERNAL_MEMORY
 #ifdef __ANDROID__

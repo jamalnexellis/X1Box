@@ -809,3 +809,69 @@ them; they are diagnostic comparisons, not accepted FPS benchmarks. It will
 preserve the then-current state and all eight diagnostic properties through
 the app UID. A fresh phone-availability window and device validation remain
 pending. The candidate stays disabled by default.
+
+The first attempt to open Load State fails before measurement and restores
+the current state. A retry gives startup five seconds and uses a complete
+press/release on the overlay menu button. All three resulting images show
+coherent road, buildings and HUD: both initial images have a stationary car
+and neutral controls; the final image shows movement into different scenery.
+Foreground, controller, configuration and unpaused-session checks pass. The
+second wait mode is omitted to finish within the original five-minute window.
+The condition-wait candidate has no device A/B validation or accepted FPS gain.
+
+The retry's movement segment contains 378 complete flips, median 67.915 ms,
+p95 82.887 ms and maximum 94.410 ms. It creates 236 texture images/views and
+31 pipelines. Texture decode peaks at 1.243 ms; pipeline creation peaks at
+30.202 ms. The finer categories resolve the large submission region:
+
+| Movement phase | Operations | Total host time | Longest operation |
+| --- | ---: | ---: | ---: |
+| Worker queue residence | 2,708 | 105.279 ms | 3.883 ms |
+| Queue submission | 3,085 | 133.137 ms | 2.242 ms |
+| GPU fence completion | 462 | 9,911.396 ms | 35.198 ms |
+| Deferred submission acknowledgement | 379 | 37.643 ms | 2.274 ms |
+| Finish: surface download | 378 | 9,851.714 ms | 36.080 ms |
+| Display image acquisition | 1,867 | 31.984 ms | 0.848 ms |
+| Display queue presentation | 1,866 | 222.046 ms | 22.133 ms |
+
+The surface-download finish averages 26.063 ms per flip; acknowledgement
+averages about 0.099 ms per call. Fence and surface-download regions overlap
+and must not be added. The dominant measured wait is graphics completion for
+a surface operation, not render-worker submission acknowledgement. The
+acknowledgement experiment stays off and is not the priority optimization.
+The reason identifies a family of paths, not the precise readback caller or
+the GPU work responsible for every stall. Pipeline first-use latency also
+remains relevant. There is no accepted FPS gain from these diagnostic traces.
+
+Both attempts restore their own current archives through the app UID. Archive,
+HDD and EEPROM checksums match the corresponding backup, app ownership and
+all eight properties are restored, debugger forwarding is absent and the
+emulator is stopped. The phone is released before the agreed deadline.
+
+## Reusing identical native presentations (perf17)
+
+The finer capture records 1,866 display presentations for 378 game flips.
+This suggests redundant presentation work but does not prove that every extra
+presentation is identical: a surface can change between guest flips. Perf17
+therefore tests identity explicitly before retaining the already presented
+image. `debug.xemu.vk.present_reuse=1` is off by default and latched before
+worker creation. It applies only to native Vulkan presentation.
+
+The key includes source image/view, drawing generations, surface-list
+generation, scanout address/stride, source/output geometry, viewport and
+swapchain format/extent. Pending CPU uploads, active or previously visible
+PVIDEO, and thumbnail capture force presentation. Only a successful queue
+presentation commits a key; failure, early returns and swapchain destruction
+invalidate it. An unchanged idle image is presented again at least every
+250 ms so output changes and errors are discovered within a bounded interval.
+Guest flips, GPU fence waits and required surface readbacks are preserved.
+The render worker still completes synchronization requests when an identical
+presentation is retained. Controls and distinct images follow their existing
+paths. Profiling counts retained presentations in `display_reuse`.
+
+The standalone production-policy fixture covers changes to every key field,
+pending uploads, video, capture, failed presents, cache invalidation, clock
+rollback and the fixed refresh deadline. It does not exercise a Vulkan
+swapchain or prove that every image mutation is tracked. CI, artifact checks
+and device correctness/performance validation are pending; the candidate
+remains disabled by default.
