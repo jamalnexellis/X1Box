@@ -61,8 +61,8 @@ android {
     minSdk = 29
     targetSdk = 36
 
-    versionCode = 34
-    versionName = "1.2.9-pgr2-perf5"
+    versionCode = 35
+    versionName = "1.2.9-pgr2-perf6"
 
     ndk {
       abiFilters += listOf("arm64-v8a")
@@ -86,6 +86,14 @@ android {
   }
 
   signingConfigs {
+    providers.environmentVariable("XEMU_DEBUG_KEYSTORE").orNull?.let { path ->
+      getByName("debug") {
+        storeFile = file(path)
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
+    }
     if (hasReleaseKeystore) {
       create("release") {
         storeFile = file(keystoreProperties.getProperty("storeFile"))

@@ -896,6 +896,7 @@ static bool create_logical_device(PGRAPHState *pg, Error **errp)
 #endif
         F(samplerAnisotropy, false),
         F(shaderClipDistance, false),
+        F(shaderStorageImageExtendedFormats, false),
         F(shaderTessellationAndGeometryPointSize, false),
         /* Gates BC1/BC2/BC3 images, which native DXT upload creates.
          * init_texture_format_map() only takes that path when this

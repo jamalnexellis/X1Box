@@ -17,6 +17,29 @@ static const char texture_upload_glsl[] =
     "        unpackUnorm4x8(pixels[offset_words + p.y * width + p.x]));\n"
     "}\n";
 
+/* RGB565 is sampled through its original normalized view. A compatible R16
+ * storage view writes the original packed bits, preserving hardware filtering
+ * and raw copies from render surfaces without a lossy RGB conversion. Mips
+ * start at four-byte aligned offsets; the final half-word has reserved padding. */
+static const char texture_upload_r16_glsl[] =
+    "#version 450\n"
+    "layout(local_size_x=8, local_size_y=8, local_size_z=1) in;\n"
+    "layout(std430, set=0, binding=0) readonly buffer Src { uint pixels[]; };\n"
+    "layout(r16ui, set=0, binding=1) uniform writeonly uimage2D dst;\n"
+    "layout(push_constant) uniform Params { uint offset_words, width, height; };\n"
+    "void main() {\n"
+    "    uvec2 p = gl_GlobalInvocationID.xy;\n"
+    "    if (p.x >= width || p.y >= height) return;\n"
+    "    uint i = p.y * width + p.x;\n"
+    "    uint v = pixels[offset_words + i / 2];\n"
+    "    imageStore(dst, ivec2(p), uvec4((v >> ((i & 1) * 16)) & 65535));\n"
+    "}\n";
+
+static inline size_t texture_upload_level_size(size_t size)
+{
+    return (size + 3) & ~(size_t)3;
+}
+
 static inline void texture_upload_image_barrier(
     VkCommandBuffer cmd, VkImage image, uint32_t levels,
     VkImageLayout old_layout, VkImageLayout new_layout,

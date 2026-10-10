@@ -1439,6 +1439,7 @@ typedef struct PGRAPHVkState {
     struct {
         bool enabled;
         VkPipeline pipeline;
+        VkPipeline r16_pipeline;
         VkPipelineLayout layout;
         VkDescriptorSetLayout set_layout;
         VkDescriptorPool pool;

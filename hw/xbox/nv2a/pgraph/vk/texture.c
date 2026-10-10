@@ -45,6 +45,7 @@ static void image_pool_drain(PGRAPHVkState *r);
 static void texture_upload_compute_destroy(PGRAPHVkState *r)
 {
     vkDestroyPipeline(r->device, r->texture_upload.pipeline, NULL);
+    vkDestroyPipeline(r->device, r->texture_upload.r16_pipeline, NULL);
     vkDestroyPipelineLayout(r->device, r->texture_upload.layout, NULL);
     vkDestroyDescriptorPool(r->device, r->texture_upload.pool, NULL);
     vkDestroyDescriptorSetLayout(r->device, r->texture_upload.set_layout, NULL);
@@ -130,6 +131,28 @@ static void texture_upload_compute_init(PGRAPHVkState *r)
     if (result != VK_SUCCESS) {
         goto fail;
     }
+    vkGetPhysicalDeviceFormatProperties(r->physical_device,
+                                        VK_FORMAT_R16_UINT, &props);
+    VkImageFormatProperties image_props;
+    if (r->enabled_physical_device_features.shaderStorageImageExtendedFormats &&
+        (props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
+        vkGetPhysicalDeviceImageFormatProperties(r->physical_device,
+            VK_FORMAT_R5G6B5_UNORM_PACK16, VK_IMAGE_TYPE_2D,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                VK_IMAGE_USAGE_STORAGE_BIT,
+            VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT,
+            &image_props) == VK_SUCCESS) {
+        module = pgraph_vk_create_shader_module_from_glsl(
+            r, VK_SHADER_STAGE_COMPUTE_BIT, texture_upload_r16_glsl);
+        if (module) {
+            pipeline_info.stage.module = module->module;
+            result = vkCreateComputePipelines(r->device, r->vk_pipeline_cache,
+                1, &pipeline_info, NULL, &r->texture_upload.r16_pipeline);
+            pgraph_vk_destroy_shader_module(r, module);
+            if (result != VK_SUCCESS) r->texture_upload.r16_pipeline = VK_NULL_HANDLE;
+        }
+    }
     uint32_t count = ARRAY_SIZE(r->texture_upload.sets);
     VkDescriptorPoolSize sizes[] = {
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, count },
@@ -157,7 +180,9 @@ static void texture_upload_compute_init(PGRAPHVkState *r)
         goto fail;
     }
     r->texture_upload.enabled = true;
-    VK_LOG_ERROR("RGBA8 compute upload enabled on %s", r->device_props.deviceName);
+    VK_LOG_ERROR("RGBA8 compute upload enabled on %s; RGB565=%s",
+                 r->device_props.deviceName,
+                 r->texture_upload.r16_pipeline ? "enabled" : "transfer fallback");
     return;
 fail:
     VK_LOG_ERROR("RGBA8 compute upload unavailable; using buffer/image copies");
@@ -172,7 +197,9 @@ static bool texture_can_compute_upload(PGRAPHVkState *r, TextureShape state,
      * get_texture_layout() only expands it for non-linear formats. */
     bool has_texture_border = state.border &&
         !kelvin_color_format_info_map[state.color_format].linear;
-    return r->texture_upload.enabled && format == VK_FORMAT_R8G8B8A8_UNORM &&
+    bool supported_format = format == VK_FORMAT_R8G8B8A8_UNORM ||
+        (format == VK_FORMAT_R5G6B5_UNORM_PACK16 && r->texture_upload.r16_pipeline);
+    return r->texture_upload.enabled && supported_format &&
            state.dimensionality == 2 && !state.cubemap && !has_texture_border &&
            state.levels <= ARRAY_SIZE(((TextureBinding *)0)->upload_views);
 }
@@ -181,6 +208,7 @@ static void texture_compute_upload(PGRAPHVkState *r, TextureBinding *binding,
                                     StorageBuffer *staging, VkCommandBuffer cmd,
                                     const VkBufferImageCopy *regions, int count)
 {
+    bool packed16 = binding->image_config.format == VK_FORMAT_R5G6B5_UNORM_PACK16;
     texture_upload_image_barrier(cmd, binding->image, count,
         binding->current_layout, VK_IMAGE_LAYOUT_GENERAL,
         binding->current_layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 :
@@ -188,13 +216,19 @@ static void texture_compute_upload(PGRAPHVkState *r, TextureBinding *binding,
         VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                       r->texture_upload.pipeline);
+                       packed16 ? r->texture_upload.r16_pipeline :
+                                  r->texture_upload.pipeline);
     for (int i = 0; i < count; i++) {
         if (!binding->upload_views[i]) {
+            VkImageViewUsageCreateInfo usage = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT,
+            };
             VkImageViewCreateInfo view_info = {
                 .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .pNext = &usage,
                 .image = binding->image, .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = VK_FORMAT_R8G8B8A8_UNORM,
+                .format = packed16 ? VK_FORMAT_R16_UINT : VK_FORMAT_R8G8B8A8_UNORM,
                 .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, i, 1, 0, 1 },
             };
             VK_CHECK(vkCreateImageView(r->device, &view_info, NULL,
@@ -943,7 +977,7 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
         for (int level_idx = 0; level_idx < state->levels; level_idx++) {
             size_t size = layer->levels[level_idx].decoded_size;
             assert(size);
-            texture_data_size += size;
+            texture_data_size += compute_upload ? texture_upload_level_size(size) : size;
         }
     }
 
@@ -979,6 +1013,10 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
                             level->depth, buffer_offset);
             memcpy(mapped_memory_ptr + buffer_offset, level->decoded_data,
                    level->decoded_size);
+            if (compute_upload) {
+                memset(mapped_memory_ptr + buffer_offset + level->decoded_size, 0,
+                       texture_upload_level_size(level->decoded_size) - level->decoded_size);
+            }
             *region = (VkBufferImageCopy){
                 .bufferOffset = buffer_offset,
                 .bufferRowLength = 0, // Tightly packed
@@ -991,7 +1029,8 @@ static void upload_texture_image(PGRAPHState *pg, int texture_idx,
                 .imageExtent =
                     (VkExtent3D){ level->width, level->height, level->depth },
             };
-            buffer_offset += level->decoded_size;
+            buffer_offset += compute_upload ?
+                texture_upload_level_size(level->decoded_size) : level->decoded_size;
             region++;
         }
     }
@@ -2222,6 +2261,10 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
     }
     if (texture_can_compute_upload(r, state, vkf.vk_format)) {
         image_create_info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+        if (vkf.vk_format == VK_FORMAT_R5G6B5_UNORM_PACK16) {
+            image_create_info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
+                                       VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+        }
     }
 
     TextureImageConfig pool_cfg = {
@@ -2304,8 +2347,13 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
     }
     assert(create_result == VK_SUCCESS && "vmaCreateImage failed");
 
+    VkImageViewUsageCreateInfo sampled_usage = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+    };
     VkImageViewCreateInfo image_view_create_info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = &sampled_usage,
         .image = snode->image,
         .viewType = state.cubemap ?
             VK_IMAGE_VIEW_TYPE_CUBE :
