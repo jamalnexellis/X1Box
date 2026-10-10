@@ -1668,9 +1668,6 @@ static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
     PGRAPHVkState *r = pg->vk_renderer_state;
     const TextureShape *shape = &t->key.state;
     VkFormat format = t->image_config.format;
-    bool native = format == VK_FORMAT_R5G6B5_UNORM_PACK16 ||
-                  format == VK_FORMAT_R8G8B8A8_UNORM ||
-                  format == VK_FORMAT_B8G8R8A8_UNORM;
     VkSurfaceCopyPolicy policy = {
         .width = shape->width, .height = shape->height, .depth = shape->depth,
         .dimensions = shape->dimensionality, .levels = shape->levels,
@@ -1680,8 +1677,8 @@ static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
         .active = s->access_cb != NULL,
         .initialized = s->initialized && s->image_layout != VK_IMAGE_LAYOUT_UNDEFINED,
         .upload_pending = s->upload_pending, .download_pending = s->download_pending,
-        .exact_native_format = native && s->host_fmt.aspect == VK_IMAGE_ASPECT_COLOR_BIT &&
-            format == s->host_fmt.vk_format &&
+        .byte_copy_compatible = s->host_fmt.aspect == VK_IMAGE_ASPECT_COLOR_BIT &&
+            vk_surface_copy_formats_compatible(s->host_fmt.vk_format, format) &&
             format == r->texture_format_map[shape->color_format].vk_format &&
             t->image_config.image_type == VK_IMAGE_TYPE_2D &&
             (t->image_config.usage & (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) ==
@@ -1769,8 +1766,18 @@ static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         static bool engaged;
         if (!engaged) {
             __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
-                                "surface queued-copy path engaged: native color 2D");
+                                "surface queued-copy path engaged: byte-preserving color 2D");
             engaged = true;
+        }
+        static bool reinterpret_engaged;
+        if (!reinterpret_engaged &&
+            surface->host_fmt.vk_format != texture->image_config.format) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                "surface queued-copy reinterpret path engaged: source_fmt=%d "
+                "destination_fmt=%d width=%u height=%u",
+                surface->host_fmt.vk_format, texture->image_config.format,
+                surface->width, surface->height);
+            reinterpret_engaged = true;
         }
 #endif
         return;

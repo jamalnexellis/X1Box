@@ -2,7 +2,12 @@ name: Android GPU copy fixture binaries
 on:
   push:
     branches: [codex/pgr2-startup-fix]
-    paths: [.github/workflows/android-cubemap-tests.yml]
+    paths:
+      - .github/workflows/android-cubemap-tests.yml
+      - android/test/cpp/test-cubemap-copy*.c
+      - android/test/cpp/test-surface-copy*.c
+      - hw/xbox/nv2a/pgraph/vk/cubemap-copy*.h
+      - hw/xbox/nv2a/pgraph/vk/surface-copy*.h
   workflow_dispatch:
 permissions:
   contents: read

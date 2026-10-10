@@ -8,7 +8,7 @@ typedef struct VkSurfaceCopyPolicy {
     uint32_t width, height, depth, dimensions, levels, layers, scale;
     uint32_t source_width, source_height;
     bool cubemap, border, color, active, initialized;
-    bool upload_pending, download_pending, exact_native_format, distinct_images;
+    bool upload_pending, download_pending, byte_copy_compatible, distinct_images;
 } VkSurfaceCopyPolicy;
 
 static inline bool vk_surface_copy_eligible(const VkSurfaceCopyPolicy *p)
@@ -18,6 +18,6 @@ static inline bool vk_surface_copy_eligible(const VkSurfaceCopyPolicy *p)
         p->depth == 1 && p->dimensions == 2 && p->levels == 1 &&
         p->layers == 1 && p->scale == 1 && !p->cubemap && !p->border &&
         p->color && p->active && p->initialized && !p->upload_pending &&
-        !p->download_pending && p->exact_native_format && p->distinct_images;
+        !p->download_pending && p->byte_copy_compatible && p->distinct_images;
 }
 #endif

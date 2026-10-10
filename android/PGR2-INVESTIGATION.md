@@ -1293,3 +1293,46 @@ this experimental baseline, not either change alone or the stock application.
 All eleven images require review, three full FPS intervals per capture and
 independent current-state restoration before the one absolute deadline.
 Fresh availability is required; no perf22 device or FPS result is claimed yet.
+
+The subsequent guarded device run installs perf22 successfully and passes
+the policy and all six native-color 2D pixel fixtures on the Adreno 830,
+alongside both cube fixtures. Device synchronization validation is not enabled.
+The candidate movement trace uses three slots, profile on and cube copy on:
+224 initial complete flips (median 69.497 ms, p95 82.681 ms, maximum 98.362 ms)
+and 287 moving flips (median 70.011 ms, p95 97.839 ms, maximum 133.912 ms).
+All three images are reviewed, with coherent road/buildings/HUD, neutral
+stationary controls and movement to 62 km/h after releasing the throttle.
+This is a limited scene/input check, not complete game or touch compatibility.
+The queued 2D candidate never engages, so the runner skips the FPS comparison;
+no FPS improvement is established. Strict phase joining and runtime checks
+pass. `tex_reuse_wait` averages 30.402 ms per initial flip and 30.042 ms moving,
+containing `flush_wait` at 30.367/30.015 ms. These overlapping host scopes must
+not be added or interpreted as pure GPU execution time. Readback routes and
+shader compilation remain zero. The bounded slow-wait metadata repeatedly
+identifies a 1280x480, one-mip color texture, source BGRA8 UNORM (44) and
+destination RGBA8 UNORM (37), excluded by the exact-format policy. All eleven
+originally empty properties, current archive/HDD/EEPROM hashes and app
+ownership are independently verified after restoration; the emulator is
+stopped and the phone released well before the absolute deadline.
+
+## Queued byte-preserving BGRA/RGBA refresh (perf23)
+
+The existing surface-to-texture fallback already uses `vkCmdCopyImage` for
+this BGRA/RGBA pair. Its bytes are reinterpreted, not converted or channel
+swizzled. The [Vulkan copy specification](https://docs.vulkan.org/spec/latest/chapters/copies.html)
+permits size-compatible color copies. Perf23 extends the opt-in queued-copy
+policy only to RGBA8/BGRA8 UNORM pairs in either direction, retaining the
+existing image/view formats, component mappings, stable resources, prior-user
+barriers, fallback and strict geometry/lifetime constraints. RGB565 still
+requires an exact format match; depth, integer, sRGB, other packed formats and
+CPU uploads remain excluded. A separate engagement log identifies the format
+pair and dimensions without guest addresses or texture contents. Default
+remains off and submission depth remains two.
+
+The generated fixture adds both cross-format directions at 16x16, 640x480 and
+the observed 1280x480, each with three queued versions and prior transfer
+reads. Byte-exact comparison detects unwanted red/blue swapping. The shared
+production format predicate also rejects unsupported and mixed-size pairs.
+Host synchronization validation, Android compilation and new artifact/device
+checks are pending. Prior transfer reads do not cover every shader-reader
+scenario. This is a targeted candidate, not a demonstrated FPS improvement.

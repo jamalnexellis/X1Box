@@ -233,8 +233,10 @@ static void test_cube(VkQueue queue, VkCommandPool pool, uint32_t width)
 }
 
 static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
-                         uint32_t height, VkFormat format, unsigned bytes_per_pixel)
+                         uint32_t height, VkFormat source_format,
+                         VkFormat destination_format, unsigned bytes_per_pixel)
 {
+    assert(vk_surface_copy_formats_compatible(source_format, destination_format));
     const unsigned passes = 3;
     size_t bytes = (size_t)width * height * bytes_per_pixel;
     VkBuffer input, output;
@@ -248,8 +250,8 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
     }
     memset(output_data, 0xa5, bytes * passes);
     VkImage source, destination;
-    VkDeviceMemory source_memory = make_image(width, height, 1, format, &source);
-    VkDeviceMemory destination_memory = make_image(width, height, 1, format, &destination);
+    VkDeviceMemory source_memory = make_image(width, height, 1, source_format, &source);
+    VkDeviceMemory destination_memory = make_image(width, height, 1, destination_format, &destination);
     VkCommandBufferAllocateInfo alloc = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
@@ -316,8 +318,10 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
     vkUnmapMemory(device, input_memory); vkUnmapMemory(device, output_memory);
     vkDestroyBuffer(device, input, NULL); vkDestroyBuffer(device, output, NULL);
     vkFreeMemory(device, input_memory, NULL); vkFreeMemory(device, output_memory, NULL);
-    printf("PASS native color 2D fmt=%d %ux%u, three queued versions and prior reads\n",
-           format, width, height);
+    printf("PASS %s color 2D source_fmt=%d destination_fmt=%d %ux%u, "
+           "three queued versions and prior reads\n",
+           source_format == destination_format ? "native" : "byte-preserving",
+           source_format, destination_format, width, height);
 }
 
 int main(void)
@@ -401,9 +405,30 @@ int main(void)
     VkFormat formats[] = { VK_FORMAT_R5G6B5_UNORM_PACK16,
         VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM };
     for (unsigned i = 0; i < 3; i++) {
+        for (unsigned j = 0; j < 3; j++) {
+            assert(vk_surface_copy_formats_compatible(formats[i], formats[j]) ==
+                   (i == j || (i != 0 && j != 0)));
+        }
+    }
+    VkFormat rejected[] = { VK_FORMAT_UNDEFINED, VK_FORMAT_R8G8_UNORM,
+        VK_FORMAT_R8G8B8A8_UINT, VK_FORMAT_B8G8R8A8_SRGB,
+        VK_FORMAT_A2R10G10B10_UNORM_PACK32, VK_FORMAT_D32_SFLOAT };
+    for (unsigned i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++) {
+        for (unsigned j = 0; j < 3; j++) {
+            assert(!vk_surface_copy_formats_compatible(rejected[i], formats[j]));
+            assert(!vk_surface_copy_formats_compatible(formats[j], rejected[i]));
+        }
+    }
+    for (unsigned i = 0; i < 3; i++) {
         unsigned bytes = i ? 4 : 2;
-        test_surface(queue, pool, 16, 16, formats[i], bytes);
-        test_surface(queue, pool, 640, 480, formats[i], bytes);
+        test_surface(queue, pool, 16, 16, formats[i], formats[i], bytes);
+        test_surface(queue, pool, 640, 480, formats[i], formats[i], bytes);
+    }
+    for (unsigned i = 1; i < 3; i++) {
+        VkFormat destination = formats[i == 1 ? 2 : 1];
+        test_surface(queue, pool, 16, 16, formats[i], destination, 4);
+        test_surface(queue, pool, 640, 480, formats[i], destination, 4);
+        test_surface(queue, pool, 1280, 480, formats[i], destination, 4);
     }
     vkDestroyCommandPool(device, pool, NULL);
     vkDestroyDevice(device, NULL);

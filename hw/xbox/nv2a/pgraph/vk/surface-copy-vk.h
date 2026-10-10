@@ -2,7 +2,22 @@
  * dependencies. Record outside render passes, after prior queued draws. */
 #ifndef XEMU_VK_SURFACE_COPY_VK_H
 #define XEMU_VK_SURFACE_COPY_VK_H
+#include <stdbool.h>
 #include <vulkan/vulkan.h>
+
+static inline bool vk_surface_copy_formats_compatible(VkFormat source,
+                                                       VkFormat destination)
+{
+    /* Preserve the existing vkCmdCopyImage byte interpretation. RGBA/BGRA
+     * UNORM copies are size-compatible, not a color conversion or swizzle. */
+    if (source == VK_FORMAT_R5G6B5_UNORM_PACK16) {
+        return destination == VK_FORMAT_R5G6B5_UNORM_PACK16;
+    }
+    return (source == VK_FORMAT_R8G8B8A8_UNORM ||
+            source == VK_FORMAT_B8G8R8A8_UNORM) &&
+           (destination == VK_FORMAT_R8G8B8A8_UNORM ||
+            destination == VK_FORMAT_B8G8R8A8_UNORM);
+}
 
 static inline void vk_surface_copy_record(VkCommandBuffer cmd,
     VkImage source, VkImageLayout source_layout, VkImage destination,
