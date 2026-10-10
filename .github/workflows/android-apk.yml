@@ -32,7 +32,7 @@ jobs:
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: 2
       RUSTUP_TOOLCHAIN: stable
-      XEMU_DEBUG_KEYSTORE: ${{ runner.temp }}/x1box-signing/debug.keystore
+      XEMU_DEBUG_KEYSTORE: ${{ github.workspace }}/.ci-signing/debug.keystore
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
       - uses: actions/setup-java@v4
