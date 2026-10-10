@@ -384,7 +384,7 @@ immediates in the saved bytes alone cannot establish the executed block's
 current chaining state. Dumps, game code, sample addresses and device logs
 remain private and are not included in the repository or build artifacts.
 
-## Latest CPU allocation binary: validation pending
+## Latest CPU allocation binary and wireless comparison
 
 Perf10 returns ARM64 registers X26 and X27 to the TCG allocator when the
 optional Xbox RAM shortcut has no configured mapping. In this base,
@@ -396,19 +396,45 @@ its reservations, and shortcut emission also checks that they exist.
 The diagnostic property `debug.xemu.tcg.reclaim_regs=0` selects the earlier
 allocation for same-APK comparisons; the default enables the change. This
 does not enable the inactive RAM shortcut, remove MMU checks, change floating
-point precision, or reduce rendering quality. The benefit requires a controlled
-device comparison and is not yet quantified.
+point precision, or reduce rendering quality.
 
 `perf10` source commit: `dec0e79ec477b77003e65b1cb2c43f8d48f96902`.
 [Successful APK build and CI checks](https://github.com/jamalnexellis/X1Box/actions/runs/38013731634).
 APK version: `1.2.9-pgr2-perf10`, version code 39.
 APK SHA-256: `501b7b6386b098ee7202bd507b0add2a62334f4c51be73f88fb4c8d904b61a13`.
 The build artifact and delivered APK checksums match. Updating the development
-package succeeds without uninstalling it. Startup, touch input and an FPS
-comparison on this binary remain pending after the phone disconnects from USB.
-Wireless ADB pairing is being arranged for further tests.
+package succeeds without uninstalling it. After authenticated wireless ADB
+pairing, four fresh-process race captures pass the configuration, EEPROM,
+controller and snapshot checks. Touch A resumes the pause state in both CPU
+configurations. All beginning and end screenshots show the same stationary car
+at 0 km/h, neutral sticks and coherent road, buildings and HUD. No capture leaves
+the game foreground.
 
-The pre-CPU-test private HDD, snapshots, shader caches, preferences and EEPROM
-are backed up. Restoration of this latest test session remains pending until
-the phone reconnects; the earlier perf8 restoration described above is complete.
-The user's original game image and firmware/HDD files remain untouched.
+The comparison uses the same APK, compute uploads enabled, identical private
+HDD/snapshot and populated disk shader caches. Each capture lasts 25 seconds.
+Only complete five-second FPS windows beginning at least five seconds after
+the measurement marker are counted: three windows per capture. The accepted
+order is earlier allocation, reclaimed registers, reclaimed registers, earlier
+allocation. No CPU profiler or backup transfer runs in the timed windows.
+
+| CPU allocation | First run | Repeat |
+| --- | ---: | ---: |
+| Earlier reservations | 14.923 FPS | 14.479 FPS |
+| Reclaimed X26/X27 | 14.955 FPS | 14.931 FPS |
+
+Aggregates are 443 flips in 30,133 ms for the earlier allocation and 451 flips
+in 30,181 ms for reclaimed registers: 14.701 versus 14.943 FPS, approximately
+1.6% apart. The earlier-allocation repeats vary by about 3%, larger than the
+aggregate difference. These short captures do not establish a material FPS
+improvement or resolve the slowdown. Thermal status remains 0; CPU/GPU clocks
+are not held constant. This comparison also does not measure cold texture or
+shader-compilation stalls, or a speedup over the earlier perf8 upload tests.
+
+After measuring, the pre-CPU-test private HDD, snapshots, shader caches,
+preferences and EEPROM are restored through the app's UID. EEPROM checksums
+match and the restored HDD checksum is checked against the private backup.
+The latest benchmark previews are preserved outside the active snapshot
+directory, and a separate pre-wireless-test backup preserves that intermediate
+state. Temporary CPU/compute properties and USB stay-awake are restored to
+their original values. The user's original game image and firmware/HDD files
+remain untouched.
