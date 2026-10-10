@@ -1273,3 +1273,23 @@ A separate policy fixture rejects incompatible states. Software-driver
 synchronization validation, Android compilation, artifact inspection and
 actual Adreno/game/FPS checks are pending; transfer-read fixtures do not
 constitute complete shader-reader or game compatibility validation.
+
+Source `cf433b3241fb61730ee7b1fbf47b65f8612c7967` succeeds in
+[APK CI run 38080413502](https://github.com/jamalnexellis/X1Box/actions/runs/38080413502)
+and [standalone Android fixture run 38080413576](https://github.com/jamalnexellis/X1Box/actions/runs/38080413576).
+Host policy/synchronization tests and Android native compilation pass.
+The downloaded `1.2.9-pgr2-perf22` (51) has SHA-256
+`3c876a35f5a8e4ecabd13e09af52ed0b4b2556af9129247a4c751991fbc5f76f`.
+It matches CI and the delivered copy, preserves certificate identity and
+contains the candidate, reuse-wait shape logs and previous 43-phase/fence
+coverage. This inspection checks certificate identity, not the full APK
+content signature; Android installation and actual Adreno/game checks remain
+pending. A seven-minute guarded test is prepared with eleven-property current
+state preservation, generated pixel fixtures on the Adreno, candidate movement
+diagnosis and a profile-off comparison of two slots/copy off versus three
+slots/copy on, ordered baseline/candidate/candidate/baseline. Cube copy stays
+on for both modes. Any gain would belong to that combination relative to
+this experimental baseline, not either change alone or the stock application.
+All eleven images require review, three full FPS intervals per capture and
+independent current-state restoration before the one absolute deadline.
+Fresh availability is required; no perf22 device or FPS result is claimed yet.
