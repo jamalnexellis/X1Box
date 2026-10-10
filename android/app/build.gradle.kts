@@ -111,7 +111,7 @@ android {
       applicationIdSuffix = ".dev"
       externalNativeBuild {
         cmake {
-          arguments += listOf("-DXEMU_ENABLE_LTO=ON")
+          arguments += listOf("-DXEMU_ENABLE_LTO=ON", "-DXEMU_ENABLE_PERF_LOG=OFF")
         }
       }
       ndk {
