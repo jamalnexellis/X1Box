@@ -46,11 +46,22 @@ static FILE *safe_fopen_w(const char *path)
 
 static FILE *perfmap;
 
+static char *perf_output_path(const char *prefix, const char *suffix,
+                              const char *default_dir)
+{
+#ifdef __ANDROID__
+    const char *dir = getenv("XEMU_JIT_PROFILE_DIR");
+    if (dir && *dir) {
+        return g_strdup_printf("%s/%s%d%s", dir, prefix, getpid(), suffix);
+    }
+#endif
+    return g_strdup_printf("%s/%s%d%s", default_dir, prefix, getpid(), suffix);
+}
+
 void perf_enable_perfmap(void)
 {
-    char map_file[32];
+    g_autofree char *map_file = perf_output_path("perf-", ".map", "/tmp");
 
-    snprintf(map_file, sizeof(map_file), "/tmp/perf-%d.map", getpid());
     perfmap = safe_fopen_w(map_file);
     if (perfmap == NULL) {
         warn_report("Could not open %s: %s, proceeding without perfmap",
@@ -191,14 +202,13 @@ static uint32_t get_e_machine(void)
 void perf_enable_jitdump(void)
 {
     struct jitheader header;
-    char jitdump_file[32];
+    g_autofree char *jitdump_file = perf_output_path("jit-", ".dump", ".");
 
     if (!use_rt_clock) {
         warn_report("CLOCK_MONOTONIC is not available, proceeding without jitdump");
         return;
     }
 
-    snprintf(jitdump_file, sizeof(jitdump_file), "jit-%d.dump", getpid());
     jitdump = safe_fopen_w(jitdump_file);
     if (jitdump == NULL) {
         warn_report("Could not open %s: %s, proceeding without jitdump",
@@ -212,7 +222,14 @@ void perf_enable_jitdump(void)
      * and will process it as a jitdump file.
      */
     perf_marker_size = qemu_real_host_page_size();
-    perf_marker = mmap(NULL, perf_marker_size, PROT_READ | PROT_EXEC,
+    /* Android disallows executing app data files. The dump is read offline
+     * alongside simpleperf samples; its contents never need to execute. */
+#ifdef __ANDROID__
+    int marker_prot = PROT_READ;
+#else
+    int marker_prot = PROT_READ | PROT_EXEC;
+#endif
+    perf_marker = mmap(NULL, perf_marker_size, marker_prot,
                        MAP_PRIVATE, fileno(jitdump), 0);
     if (perf_marker == MAP_FAILED) {
         warn_report("Could not map %s: %s, proceeding without jitdump",
@@ -346,6 +363,10 @@ void perf_report_code(uint64_t guest_pc, TranslationBlock *tb,
         for (insn = 0; insn < tb->icount; insn++) {
             write_perfmap_entry(start, insn, &q[insn]);
         }
+#ifdef __ANDROID__
+        /* adb can collect a complete map while the app is still running. */
+        fflush(perfmap);
+#endif
         funlockfile(perfmap);
     }
 
@@ -355,6 +376,9 @@ void perf_report_code(uint64_t guest_pc, TranslationBlock *tb,
         write_jr_code_debug_info(start, q, tb->icount);
         write_jr_code_load(start, tcg_ctx->gen_insn_end_off[tb->icount - 1],
                            q);
+#ifdef __ANDROID__
+        fflush(jitdump);
+#endif
         funlockfile(jitdump);
     }
 

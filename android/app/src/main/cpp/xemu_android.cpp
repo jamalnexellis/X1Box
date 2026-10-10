@@ -1617,6 +1617,26 @@ extern "C" int SDL_main(int argc, char* argv[]) {
 
     std::vector<std::string> arg_storage;
     arg_storage.emplace_back("xemu");
+    // Opt-in developer profiling: relate generated ARM PCs to Xbox x86 PCs.
+    // Keep dumps in internal app storage and out of normal gameplay sessions.
+    char jit_profile[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.tcg.profile", jit_profile);
+    if (strcmp(jit_profile, "1") == 0 || strcmp(jit_profile, "2") == 0) {
+      const char* internal = SDL_GetAndroidInternalStoragePath();
+      if (internal && *internal) {
+        std::string profile_dir = std::string(internal) + "/jit-profile";
+        if (EnsureDirExists(profile_dir)) {
+          setenv("XEMU_JIT_PROFILE_DIR", profile_dir.c_str(), 1);
+          arg_storage.emplace_back("-perfmap");
+          if (strcmp(jit_profile, "2") == 0) {
+            arg_storage.emplace_back("-jitdump");
+          }
+          LogInfoFmt("TCG profile output: %s", profile_dir.c_str());
+        } else {
+          LogErrorFmt("Cannot create TCG profile directory %s", profile_dir.c_str());
+        }
+      }
+    }
     if (IsTcgTuningEnabled()) {
       const char* tcg_thread = GetTcgThreadFromEnv();
       int tcg_tb_size = GetTcgTbSizeFromEnv();
