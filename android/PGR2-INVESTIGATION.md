@@ -1181,3 +1181,40 @@ only attributes fully contained same-thread slow fence intervals; incomplete
 coverage, short waits, the shared quota and overlapping thread totals cannot
 be presented as pure CPU/GPU execution time. No perf21 install or capture has
 occurred yet; fresh device availability is requested after artifact checks.
+
+The fresh perf21 capture installs successfully. The first runner stops at its
+remaining-time guard before any mutation; a shorter 20-second movement uses
+the same original three-minute deadline, with restoration time reserved.
+Runtime confirms two submission slots, the GPU cubemap path and the revised
+fence coverage. All three images are reviewed: neutral stopped initial state,
+then different scenery and 40 km/h after acceleration, with coherent car,
+buildings, road and HUD. Resume and accelerator inputs respond; this is not
+a complete control or game-compatibility test. Current archive, HDD, EEPROM,
+all ten originally empty properties and ownership are independently verified
+after app-UID restoration. The emulator is stopped and phone released before
+the deadline.
+
+The marked segments contain 239 initial complete flips (median 63.702 ms,
+p95 76.432 ms, maximum 91.299 ms) and 301 moving flips (median 66.935 ms,
+p95 91.198 ms, maximum 124.897 ms). All readback routes and shader compilation
+remain zero. Pipeline creation peaks at 27.367 ms during movement.
+`finish_wait` averages 25.380 ms per initial flip and 25.779 ms moving.
+Fully contained same-thread slow fence intervals cover 99.258% of 220 logged
+slow preparation parents initially, and 99.179% of the time in 281 such
+parents moving (279 have a logged child). The slow-event subset is bounded
+by the shared quota and two-millisecond threshold. This attributes almost all
+of the examined long preparation waits to waiting for submitted GPU work;
+it is not a GPU execution-time measurement or a diagnosis of all frame costs.
+Other fence waits and threads are present, so aggregate fence totals must not
+be subtracted from or added to `finish_wait`. No new FPS gain is established.
+
+The existing renderer allocates three submission slots and accepts counts up
+to three. Android's default selects two on this device. A private six-minute
+comparison is prepared without another native change: fixed same-scene states,
+profiling off, cube copy enabled throughout and slot counts 2/3/3/2. Exact
+preference fixtures differ only in `submit_frames`, are checksum-guarded and
+copied as the app UID. Native startup must confirm each count. A final opt-in
+three-slot movement trace measures the fence wait if sufficient restoration
+time remains. All benchmark/trace images require review, alongside AI traffic,
+cache and thermal limits. Defaults remain unchanged and fresh availability is
+required; increased queue depth is a hypothesis, not an accepted improvement.
