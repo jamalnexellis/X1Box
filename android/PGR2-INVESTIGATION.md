@@ -610,10 +610,10 @@ left behind. Original game and firmware/HDD files remain untouched.
 
 ## Bounded RAM-writer diagnostic (perf14)
 
-The wait word observed with perf12 has not yet been attributed to a producer.
-The private executable's surrounding buffer protocol suggests an APU command
-mailbox, but that is an unconfirmed hypothesis. Speeding up the polling loop
-has not demonstrated a material frame-rate improvement.
+Perf12 identifies a RAM word polled by the game, and the perf14 device capture
+below confirms matching zero writes by GP scratch DMA. Speeding up the polling
+loop has not demonstrated a material frame-rate improvement. Attribution of
+the producer does not establish the duration or criticality of this dependency.
 
 Perf14 adds two minimal Android HMP commands reachable through the opt-in
 loopback guest debugger: `xemu-apu-watch` and `xemu-apu-unwatch`. While the guest
@@ -638,13 +638,53 @@ The downloaded artifact checksum matches CI, its certificate matches perf13,
 and the packaged ARM64 library contains both diagnostic entry points and
 mode strings. The private RSP client passes offline checks for fragmented
 packets, multiple monitor output packets, rejected-watch cleanup, mismatched
-guest code, breakpoint removal and detach. These are preparation checks;
-device validation remains pending.
+guest code, breakpoint removal and detach. These checks exercise the client
+protocol and cleanup; they do not validate CPU translation semantics.
 
-A private comparison script also prepares the application's existing full-DSP
-option off/on/on/off within the same APK and stationary snapshot. Only that
-preference changes; DSP JIT remains on and CPU/compute modes remain fixed.
-This tests a supported audio configuration, without changing DSP execution
-budgets in code. It is a separate FPS experiment from the debugger-enabled
-writer capture. No result or APU bottleneck is established yet. A fresh phone
-availability window is requested before either test runs.
+A newly authorized seven-minute window completes both tests on perf14. The
+wireless device reconnects through its existing mDNS pairing; an update installs
+without uninstalling the app. The existing full-DSP preference changes
+off/on/on/off within the same APK and stationary snapshot. DSP JIT stays on;
+compute uploads and reclaimed registers stay on, while STI chaining, I/O elision,
+profiling and debugging stay off. The preference variants differ in only the
+full-DSP setting, and the effective audio and CPU configuration is checked in
+each process's log. Each run lasts 25 seconds; three complete five-second
+windows beginning at least five seconds after the marker are accepted.
+
+| Full DSP | First run | Repeat |
+| --- | ---: | ---: |
+| Off | 14.939 FPS | 14.914 FPS |
+| On | 13.110 FPS | 14.827 FPS |
+
+The off aggregate is 451 flips in 30,215 ms (14.926 FPS), and the on aggregate
+is 422 flips in 30,219 ms (13.965 FPS), a decrease of approximately 6.44%.
+The on repetitions vary by approximately 13.10%, so the size of a repeatable
+regression is unresolved. This comparison does not demonstrate an improvement
+from full DSP. Thermal status stays 0, but clocks are not held constant. The
+eight screenshots show coherent buildings, road and HUD, neutral controls and
+a stationary car; touch A resumes the snapshot. All controller, EEPROM,
+snapshot, configuration and foreground checks pass. This is a short warmed
+scene, not a test of cold uploads or shader compilation. Full DSP changes both
+processing and the audio output path, so it does not isolate a single cause.
+
+The separate debugger-enabled launch restores the original DSP-off benchmark
+configuration and passes the same health and two-screenshot review. The RSP
+client verifies the code before installing a breakpoint and again at the stopped
+PC, then reads the four-byte polled word. The monitor resolves that virtual word
+through the current page tables into RAM. After breakpoint removal and detach,
+exactly 16 matching writes come from `gp-scratch`, all submitting zero to the
+watched word. This confirms that GP scratch DMA writes the value that can
+release this particular guest wait. It does not measure request-to-completion
+latency, prove that audio limits FPS, or exclude other writers. Raw game code,
+registers, addresses and captures remain private. No FPS from this diagnostic
+is accepted as a benchmark.
+
+Both tests and restoration finish within the agreed phone window. The current
+pre-test state is restored through the app's UID. The downloaded archive
+checksum and restored HDD/EEPROM checksums match this session's backup;
+EEPROM retains app ownership. All six temporary properties return to their
+pre-test values, the debugger forward is removed, and the emulator is stopped.
+The user's original game and firmware/HDD files remain untouched. The existing
+default DSP setting is restored. The next useful measurement is the dependency's
+latency and the producer's execution versus scheduling/pacing time before
+selecting another synchronization or translation change.
