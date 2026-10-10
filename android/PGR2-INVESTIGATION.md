@@ -438,3 +438,28 @@ directory, and a separate pre-wireless-test backup preserves that intermediate
 state. Temporary CPU/compute properties and USB stay-awake are restored to
 their original values. The user's original game image and firmware/HDD files
 remain untouched.
+# Experimental CPU dispatch investigation (perf11)
+
+The valid perf9 vCPU profile attributes 22.48% of sampled vCPU cycles to
+`cpu_exec_loop` and 7.90% to `cpu_tb_exec`. Disassembly of generated kernel
+blocks shows an STI block followed by a separate block that completes the
+interrupt shadow. These are candidate dispatcher costs, not evidence that CPU
+translation is the frame-rate bottleneck. The game's memory-poll loop consumes
+19.98% of the sampled vCPU cycles, and its dependency remains unidentified.
+
+Perf11 adds opt-in STI chaining (`debug.xemu.tcg.sti_chain=1`). The default is
+off. It uses the existing TB lookup to enter the following block while the
+interrupt shadow remains active. The following block retains its exit-request
+check, completes one instruction, clears the shadow and returns to dispatch.
+MOV/POP SS, an already active shadow, TF/RF, instruction-count limits, icount,
+debug stepping, disabled chaining, breakpoint pages and plugins retain the
+existing path. Cache misses return with the updated EIP and hflags saved.
+No guest instructions or interrupt checks in the destination block are removed.
+CPU semantic validation and same-APK performance measurements are pending;
+this experiment must not be described as a measured FPS improvement.
+
+`debug.xemu.gdb=1` enables the existing guest debugger on `127.0.0.1:9009` for
+ADB forwarding. It is off by default and does not bind a network-facing address.
+This permits reading the registers and guest memory at the identified polling
+instruction to determine what the CPU is waiting for. Debugging captures and
+guest data stay outside the repository, and FPS comparisons use debugging off.

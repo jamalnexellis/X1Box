@@ -41,6 +41,10 @@
 
 static int g_use_fp_jit;
 
+#ifdef XBOX
+static bool g_chain_sti;
+#endif
+
 #if defined(XBOX)
 struct FPUProfileCounters {
     int x87_arith;
@@ -314,6 +318,9 @@ typedef struct DisasContext {
  * of reconstructing it from the CPU.
  */
 #define DISAS_JUMP_STATIC      DISAS_TARGET_5
+
+/* STI with a newly activated interrupt shadow; lookup the following TB. */
+#define DISAS_EOB_STI          DISAS_TARGET_6
 
 /* The environment in which user-only runs is constrained. */
 #ifdef CONFIG_USER_ONLY
@@ -2996,7 +3003,7 @@ gen_eob(DisasContext *s, int mode)
     if (s->flags & HF_INHIBIT_IRQ_MASK) {
         gen_reset_hflag(s, HF_INHIBIT_IRQ_MASK);
         inhibit_reset = true;
-    } else if (mode == DISAS_EOB_INHIBIT_IRQ) {
+    } else if (mode == DISAS_EOB_INHIBIT_IRQ || mode == DISAS_EOB_STI) {
         gen_set_hflag(s, HF_INHIBIT_IRQ_MASK);
     }
 
@@ -3008,6 +3015,21 @@ gen_eob(DisasContext *s, int mode)
         tcg_gen_exit_tb(NULL, 0);
     } else if (s->flags & HF_TF_MASK) {
         gen_helper_single_step(tcg_env);
+    } else if (mode == DISAS_EOB_STI && !inhibit_reset) {
+        /*
+         * STI changes IF and activates the shadow without changing the code
+         * segment or memory mode.  The following TB still checks exit requests
+         * on entry, runs one instruction under HF_INHIBIT_IRQ, clears the
+         * shadow and returns to the main loop to process pending interrupts.
+         * A cache miss also returns there with EIP and hflags already saved.
+         * Do not use this for MOV/POP SS, which can change the memory mode, or
+         * for an STI that itself completes an existing shadow.
+         */
+#ifndef TARGET_X86_64
+        tcg_gen_lookup_and_goto_ptr_i32(cpu_eip, s->cs_base, s->flags);
+#else
+        tcg_gen_lookup_and_goto_ptr();
+#endif
     } else if ((mode == DISAS_JUMP || mode == DISAS_JUMP_STATIC) &&
                /* give irqs a chance to happen */
                !inhibit_reset) {
@@ -4529,6 +4551,11 @@ void tcg_x86_init(void)
 #if defined(XBOX) && defined(__x86_64__)
     g_use_fp_jit = g_config.perf.fp_jit;
 #endif
+#ifdef XBOX
+    /* Experimental until CPU semantics and device A/B checks are complete. */
+    const char *chain_sti = getenv("XEMU_TCG_CHAIN_STI");
+    g_chain_sti = chain_sti && strcmp(chain_sti, "1") == 0;
+#endif
 }
 
 static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
@@ -4707,6 +4734,7 @@ static void i386_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
         break;
     case DISAS_EOB_NEXT:
     case DISAS_EOB_INHIBIT_IRQ:
+    case DISAS_EOB_STI:
         assert(dc->base.pc_next == dc->pc);
         gen_update_eip_cur(dc);
         /* fall through */

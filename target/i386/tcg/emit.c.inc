@@ -4232,6 +4232,16 @@ static void gen_STI(DisasContext *s, X86DecodedInsn *decode)
 {
     gen_set_eflags(s, IF_MASK);
     s->base.is_jmp = DISAS_EOB_INHIBIT_IRQ;
+#ifdef XBOX
+    if (g_chain_sti && CODE32(s) && CPL(s) == 0 && !VM86(s) &&
+        !SVME(s) && !s->base.plugin_enabled &&
+        !(s->flags & (HF_RF_MASK | HF_TF_MASK | HF_INHIBIT_IRQ_MASK)) &&
+        !(tb_cflags(s->base.tb) & (CF_COUNT_MASK | CF_USE_ICOUNT |
+                                  CF_SINGLE_STEP | CF_NO_GOTO_TB |
+                                  CF_NO_GOTO_PTR | CF_BP_PAGE | CF_NOIRQ))) {
+        s->base.is_jmp = DISAS_EOB_STI;
+    }
+#endif
 }
 
 static void gen_VAESKEYGEN(DisasContext *s, X86DecodedInsn *decode)

@@ -1623,6 +1623,19 @@ extern "C" int SDL_main(int argc, char* argv[]) {
     const bool reclaim_tcg_regs = strcmp(reclaim_regs, "0") != 0;
     setenv("XEMU_TCG_RECLAIM_REGS", reclaim_tcg_regs ? "1" : "0", 1);
     LogInfoInt("TCG reclaim unused RAM registers=%d", reclaim_tcg_regs ? 1 : 0);
+    char chain_sti[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.tcg.sti_chain", chain_sti);
+    const bool chain_sti_enabled = strcmp(chain_sti, "1") == 0;
+    setenv("XEMU_TCG_CHAIN_STI", chain_sti_enabled ? "1" : "0", 1);
+    LogInfoInt("TCG experimental STI chaining=%d", chain_sti_enabled ? 1 : 0);
+    // Opt-in guest debugging through ADB forwarding; never listen on Wi-Fi.
+    char guest_debug[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.gdb", guest_debug);
+    if (strcmp(guest_debug, "1") == 0) {
+      arg_storage.emplace_back("-gdb");
+      arg_storage.emplace_back("tcp:127.0.0.1:9009");
+      LogInfo("Guest debugger listening on loopback port 9009");
+    }
     // Opt-in developer profiling: relate generated ARM PCs to Xbox x86 PCs.
     // Keep dumps in internal app storage and out of normal gameplay sessions.
     char jit_profile[PROP_VALUE_MAX] = {};
