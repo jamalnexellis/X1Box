@@ -574,7 +574,36 @@ Version `1.2.9-pgr2-perf13` (42) has APK SHA-256
 `a5a02ba1b230bb49f4eb340db5814bd6b93bff9622f4f1e9d6a02684a3fa2e14`.
 The downloaded checksum matches CI, and packaged-library inspection confirms
 the mode log, socket registration anchor and guest register feature table.
-Its signing certificate matches perf12. The verified APK is available locally;
-an additional phone availability window is requested before installation.
-Device compatibility, emitted-code checks and same-APK performance validation
-are pending. This is not a demonstrated FPS improvement.
+Its signing certificate matches perf12, and an authenticated wireless update
+installs without uninstalling the app.
+
+During a newly authorized five-minute window, four fresh-process, 25-second
+captures repeat the same stationary snapshot with populated disk caches.
+The order is elision off, on, on, off; STI chaining stays off, compute uploads
+and reclaimed registers stay on, and CPU profiling and debugging stay off.
+Both requested and effective elision modes match the intended settings in the
+logs. All configuration, controller, EEPROM, snapshot and foreground checks
+pass. The eight screenshots show coherent graphics, neutral controls and a
+stationary car; touch A resumes the paused snapshot in both configurations.
+Only complete five-second windows beginning at least five seconds after each
+measurement marker are accepted, with three windows per run.
+
+| `can_do_io` elision | First run | Repeat |
+| --- | ---: | ---: |
+| Off | 14.362 FPS | 14.433 FPS |
+| On | 14.503 FPS | 14.370 FPS |
+
+Aggregates are 435 flips in 30,213 ms with elision off and 436 flips in
+30,201 ms with it on: 14.398 versus 14.437 FPS, approximately 0.27% apart.
+Repeat variation is larger than this difference. Thermal status stays 0 but
+clocks are not held constant; these are warmed-scene results and do not measure
+cold texture uploads or shader compilation. The experiment remains off by
+default. This comparison does not demonstrate a useful FPS gain or establish
+that translation of the wait loop limits the frame rate. CPU semantic and
+emitted-code validation remain pending before any default activation.
+
+The current pre-test private state is restored through the app's UID and the
+emulator is stopped. The downloaded archive checksum and the restored HDD and
+EEPROM checksums match this session's backup. EEPROM retains app ownership,
+all diagnostic properties match their pre-test values, and no ADB forward is
+left behind. Original game and firmware/HDD files remain untouched.
