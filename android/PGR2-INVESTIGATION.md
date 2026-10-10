@@ -982,3 +982,44 @@ the current archive, HDD, EEPROM, original shader and properties. Cache
 extraction merges files; newly generated cache entries may remain. No entire
 cache reset is planned. Fresh phone availability and device validation remain
 pending; this APK is diagnostic and has no accepted FPS improvement.
+
+The fresh three-minute perf18 window completes with all three images reviewed:
+the initial car is stopped with neutral controls, and the final image shows
+68 km/h and different road/buildings. Configuration, controller, native
+presentation, foreground and split-frame completeness checks pass. The
+analyzer joins 974 consecutive complete 43-phase records. No shader compiler
+stage runs in this trace, including startup; staging the one cache entry does
+not reproduce its first use on this route. The earlier 105.291 ms compilation
+remains evidence of one hitch, but its internal stage attribution is pending.
+
+The initial segment has 238 complete flips (median 63.308 ms, p95 72.805 ms,
+maximum 77.706 ms). Movement has 431 (median 62.429 ms, p95 77.155 ms,
+maximum 89.221 ms). Every measured surface-download finish belongs to deferred
+completion: 431 calls and 9,198.886 ms host time in movement, averaging
+21.343 ms per flip. CPU-access waits, pending/dirty downloads and incompatible
+binding eviction count zero in the measured segments. Texture-range fallback
+parents account for 4,326 calls and 9,401.175 ms, overlapping deferred finish
+and GPU fences. Their byte counters are requested ranges, not transferred
+bytes. Pipeline creation peaks at 30.297 ms. These instrumented scenes and
+cache histories do not establish an FPS improvement over earlier APKs.
+
+The current archive, HDD, EEPROM, staged shader's original bytes and all nine
+originally empty properties are independently verified after restoration
+through the app UID. The emulator is stopped, debugger forwarding is absent
+and the phone is explicitly released before the deadline. New phone actions
+require fresh availability. Game and cache contents remain private.
+
+## Identifying the surface-to-texture fallback (perf19)
+
+Perf18 places the recurrent synchronization in the texture-range fallback and
+deferred surface completion. It does not identify which texture shape fails
+the existing GPU surface-copy eligibility checks. Perf19 adds at most sixteen
+shape-only detail records for slow fallback calls while stall profiling is
+enabled. They record dimensions, formats, layout, pitch, mip/cube flags,
+overlap/dirty counts and the selected exact or overlapping surface's shape.
+Dirty counts are collected before the readback. Addresses, pixels and shader
+contents are excluded. Profiling off performs no extra surface scan or log.
+The existing GPU-copy eligibility, downloads and rendering remain unchanged.
+This is a targeted diagnostic; a GPU-only conversion must match the observed
+layout before it can be a correctness-preserving optimization. Build,
+artifact checks and a fresh capture are pending.

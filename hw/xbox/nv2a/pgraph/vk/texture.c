@@ -1744,6 +1744,76 @@ static bool check_surface_to_texture_compatiblity(PGRAPHVkState *r,
            surface->host_fmt.host_bytes_per_pixel == vk_format_texel_size(tex_vkf.vk_format);
 }
 
+#ifdef __ANDROID__
+/* Bounded shape-only evidence for the expensive CPU fallback. No addresses,
+ * texture contents or shader source are emitted. Collect before download so
+ * dirty counts still identify the surfaces which required synchronization. */
+typedef struct TextureReadbackDetail {
+    unsigned overlaps, dirty;
+    bool has_surface, exact, source_dirty, color, swizzle, upload;
+    unsigned format, width, height, pitch, bpp;
+} TextureReadbackDetail;
+
+static unsigned texture_readback_details_emitted;
+
+static TextureReadbackDetail texture_readback_detail(PGRAPHState *pg,
+                                                     hwaddr start, size_t length)
+{
+    PGRAPHVkState *r = pg->vk_renderer_state;
+    TextureReadbackDetail detail = {};
+    SurfaceBinding *surface;
+    QTAILQ_FOREACH(surface, &r->surfaces, entry) {
+        if (surface->vram_addr >= start + length ||
+            start >= surface->vram_addr + surface->size) {
+            continue;
+        }
+        detail.overlaps++;
+        detail.dirty += surface->draw_dirty;
+        /* Prefer the exact-base surface; otherwise retain the first dirty
+         * overlap, or the first overlap if none is dirty. */
+        if (!detail.has_surface ||
+            (!detail.exact && (surface->vram_addr == start ||
+                              (surface->draw_dirty && !detail.source_dirty)))) {
+            detail.has_surface = true;
+            detail.exact = surface->vram_addr == start;
+            detail.source_dirty = surface->draw_dirty;
+            detail.color = surface->color;
+            detail.swizzle = surface->swizzle;
+            detail.upload = surface->upload_pending;
+            detail.format = surface->color ? surface->shape.color_format :
+                                            surface->shape.zeta_format;
+            detail.width = surface->width;
+            detail.height = surface->height;
+            detail.pitch = surface->pitch;
+            detail.bpp = surface->host_fmt.host_bytes_per_pixel;
+        }
+    }
+    return detail;
+}
+
+static void log_texture_readback_detail(const TextureShape *shape,
+                                       TextureReadbackDetail detail,
+                                       int64_t elapsed)
+{
+    if (elapsed < 2000 ||
+        qatomic_fetch_inc(&texture_readback_details_emitted) >= 16) {
+        return;
+    }
+    __android_log_print(ANDROID_LOG_INFO, "xemu-stall-detail",
+        "texture_fallback us=%" PRId64 " fmt=%u width=%u height=%u "
+        "depth=%u dim=%u mips=%u cube=%d border=%d linear=%d pitch=%u "
+        "overlaps=%u dirty=%u exact=%d surface=%d color=%d "
+        "surface_fmt=%u surface_width=%u surface_height=%u "
+        "surface_pitch=%u surface_bpp=%u swizzle=%d upload=%d",
+        elapsed, shape->color_format, shape->width, shape->height,
+        shape->depth, shape->dimensionality, shape->levels, shape->cubemap,
+        shape->border, kelvin_color_format_info_map[shape->color_format].linear,
+        shape->pitch, detail.overlaps, detail.dirty, detail.exact,
+        detail.has_surface, detail.color, detail.format, detail.width,
+        detail.height, detail.pitch, detail.bpp, detail.swizzle, detail.upload);
+}
+#endif
+
 static void create_dummy_texture(PGRAPHState *pg)
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
@@ -2066,11 +2136,26 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
 
         if (!skip_surf_scan) {
             int64_t readback_start = nv2a_stall_start();
+#ifdef __ANDROID__
+            bool collect_detail = readback_start &&
+                qatomic_read(&texture_readback_details_emitted) < 16;
+            TextureReadbackDetail detail = {};
+            if (collect_detail) {
+                detail = texture_readback_detail(pg, texture_vram_offset,
+                                                 texture_length);
+            }
+#endif
             bool had_overlap = pgraph_vk_download_surfaces_in_range_if_dirty(
                 pg, texture_vram_offset, texture_length);
             if (had_overlap) {
                 nv2a_stall_record(NV2A_STALL_TEXTURE_RANGE_READBACK,
                                  readback_start, texture_length);
+#ifdef __ANDROID__
+                if (collect_detail) {
+                    log_texture_readback_detail(&state, detail,
+                        qemu_clock_get_us(QEMU_CLOCK_REALTIME) - readback_start);
+                }
+#endif
             }
             range_ent->vram_addr = texture_vram_offset;
             range_ent->length = texture_length;
