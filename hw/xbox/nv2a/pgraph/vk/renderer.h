@@ -617,6 +617,7 @@ typedef enum {
 
 typedef struct RenderCommand {
     RenderCommandType type;
+    int64_t queued_us; /* Zero when host stall profiling is disabled. */
 
     union {
         struct {
@@ -672,10 +673,12 @@ typedef struct RenderThread {
     QemuThread thread;
     QemuMutex lock;
     QemuCond cond;
+    QemuCond submitted_cond;
     QemuEvent idle_event;
     QSIMPLEQ_HEAD(, RenderCommand) queue;
     bool shutdown;
     int queue_depth;
+    bool blocking_submit_ack; /* Opt-in, latched before worker creation. */
 } RenderThread;
 
 typedef struct TextureKey {
@@ -1691,6 +1694,7 @@ void pgraph_vk_render_thread_init(PGRAPHVkState *r);
 void pgraph_vk_render_thread_shutdown(PGRAPHVkState *r);
 void pgraph_vk_render_thread_enqueue(PGRAPHVkState *r, RenderCommand *cmd);
 void pgraph_vk_render_thread_wait_idle(PGRAPHVkState *r);
+void pgraph_vk_render_thread_wait_submitted(PGRAPHVkState *r, int frame);
 void pgraph_vk_snapshot_state(PGRAPHState *pg, RenderCommandSnapshot *snap);
 
 // shaders.c

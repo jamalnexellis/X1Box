@@ -2105,15 +2105,19 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
 #ifdef __ANDROID__
     if (disp->direct_present) {
         present_sync_index = disp->present_frame % disp->image_count;
+        int64_t present_fence_start = nv2a_stall_start();
         VK_CHECK(vkWaitForFences(
             r->device, 1, &disp->present_fences[present_sync_index],
             VK_TRUE, UINT64_MAX));
+        nv2a_stall_record(NV2A_STALL_DISPLAY_FENCE, present_fence_start, 0);
 
         uint32_t acquired_index = 0;
+        int64_t acquire_start = nv2a_stall_start();
         VkResult acquire_result = vkAcquireNextImageKHR(
             r->device, disp->swapchain, UINT64_MAX,
             disp->image_available[present_sync_index], VK_NULL_HANDLE,
             &acquired_index);
+        nv2a_stall_record(NV2A_STALL_DISPLAY_ACQUIRE, acquire_start, 0);
         if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
             __android_log_print(ANDROID_LOG_WARN, "hakuX-vk",
                                 "present: swapchain out of date; recreating");
@@ -2129,9 +2133,11 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
         }
         disp->render_idx = acquired_index;
         if (disp->image_in_flight[acquired_index] != VK_NULL_HANDLE) {
+            int64_t image_fence_start = nv2a_stall_start();
             VK_CHECK(vkWaitForFences(
                 r->device, 1, &disp->image_in_flight[acquired_index],
                 VK_TRUE, UINT64_MAX));
+            nv2a_stall_record(NV2A_STALL_DISPLAY_FENCE, image_fence_start, 0);
         }
 
         if (disp->capture.supported &&
@@ -2161,8 +2167,10 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
      * Wait before updating either resource when the compatibility presenter
      * cycles back to a slot that is still in flight. */
     if (!disp->direct_present && img->fence_submitted) {
+        int64_t image_fence_start = nv2a_stall_start();
         VK_CHECK(vkWaitForFences(r->device, 1, &img->fence, VK_TRUE,
                                  UINT64_MAX));
+        nv2a_stall_record(NV2A_STALL_DISPLAY_FENCE, image_fence_start, 0);
         img->fence_submitted = false;
     }
 
@@ -2426,9 +2434,11 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
             &disp->render_finished[present_sync_index];
         VK_CHECK(vkResetFences(
             r->device, 1, &disp->present_fences[present_sync_index]));
+        int64_t display_submit_start = nv2a_stall_start();
         VK_CHECK(vkQueueSubmit(
             r->queue, 1, &submit_info,
             disp->present_fences[present_sync_index]));
+        nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, display_submit_start, 0);
 
         uint32_t present_image_index = disp->render_idx;
         disp->image_in_flight[present_image_index] =
@@ -2441,7 +2451,9 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
             .pSwapchains = &disp->swapchain,
             .pImageIndices = &present_image_index,
         };
+        int64_t present_start = nv2a_stall_start();
         VkResult present_result = vkQueuePresentKHR(r->queue, &present_info);
+        nv2a_stall_record(NV2A_STALL_DISPLAY_PRESENT, present_start, 0);
         if (present_result == VK_ERROR_OUT_OF_DATE_KHR) {
             __android_log_print(ANDROID_LOG_WARN, "hakuX-vk",
                                 "present: swapchain became out of date; "
@@ -2476,7 +2488,9 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
 #endif
     {
         VK_CHECK(vkResetFences(r->device, 1, &img->fence));
+        int64_t display_submit_start = nv2a_stall_start();
         VK_CHECK(vkQueueSubmit(r->queue, 1, &submit_info, img->fence));
+        nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, display_submit_start, 0);
         img->fence_submitted = true;
     }
     img->valid = true;

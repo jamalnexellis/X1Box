@@ -2420,6 +2420,18 @@ const enum NV2A_PROF_COUNTERS_ENUM finish_reason_to_counter_enum[] = {
     [VK_FINISH_REASON_STALLED] = NV2A_PROF_FINISH_STALLED,
 };
 
+static const NV2AStallPhase finish_reason_to_stall_phase[] = {
+    [VK_FINISH_REASON_VERTEX_BUFFER_DIRTY] = NV2A_STALL_FINISH_VERTEX,
+    [VK_FINISH_REASON_SURFACE_CREATE] = NV2A_STALL_FINISH_SURFACE_CREATE,
+    [VK_FINISH_REASON_SURFACE_DOWN] = NV2A_STALL_FINISH_SURFACE_DOWN,
+    [VK_FINISH_REASON_NEED_BUFFER_SPACE] = NV2A_STALL_FINISH_BUFFER_SPACE,
+    [VK_FINISH_REASON_FRAMEBUFFER_DIRTY] = NV2A_STALL_FINISH_FRAMEBUFFER,
+    [VK_FINISH_REASON_PRESENTING] = NV2A_STALL_FINISH_PRESENTING,
+    [VK_FINISH_REASON_FLIP_STALL] = NV2A_STALL_FINISH_FLIP,
+    [VK_FINISH_REASON_FLUSH] = NV2A_STALL_FINISH_FLUSH,
+    [VK_FINISH_REASON_STALLED] = NV2A_STALL_FINISH_STALLED,
+};
+
 void pgraph_vk_flush_all_frames(PGRAPHState *pg)
 {
     int64_t wait_start = nv2a_stall_start();
@@ -2661,10 +2673,12 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
                 },
             };
 
+            int64_t queue_start = nv2a_stall_start();
             vkResetFences(r->device, 1, &r->command_buffer_fence);
             VK_CHECK(vkQueueSubmit(r->queue, ARRAY_SIZE(submit_infos),
                                    submit_infos,
                                    r->command_buffer_fence));
+            nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, queue_start, 0);
             qatomic_inc(&r->submit_count);
 
             if (finish_reason == VK_FINISH_REASON_PRESENTING) {
@@ -2673,9 +2687,11 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
                  * stay untouched until the GPU finishes. */
                 qatomic_set(&r->frame_submitted[r->current_frame], true);
             } else {
+                int64_t fence_start = nv2a_stall_start();
                 VK_CHECK(vkWaitForFences(r->device, 1,
                                          &r->command_buffer_fence,
                                          VK_TRUE, UINT64_MAX));
+                nv2a_stall_record(NV2A_STALL_GPU_FENCE, fence_start, 0);
                 if (r->pending_post_fence_cb) {
                     r->pending_post_fence_cb(r, NULL,
                                              r->pending_post_fence_opaque);
@@ -2746,12 +2762,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
             pgraph_vk_render_thread_enqueue(r, cmd);
 
             if (deferred) {
-                /* Spin-wait for render thread to complete vkQueueSubmit.
-                 * Faster than QemuEvent (no futex/eventfd syscall overhead).
-                 * Typically completes in <100μs. */
-                while (!qatomic_read(&r->frame_submitted[deferred_frame])) {
-                    sched_yield();
-                }
+                pgraph_vk_render_thread_wait_submitted(r, deferred_frame);
             }
 
             if (!deferred) {
@@ -2778,6 +2789,8 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
 
         NV2A_PHASE_TIMER_END(finish_submit);
         nv2a_stall_record(NV2A_STALL_FINISH_SUBMIT, finish_submit_start, 0);
+        nv2a_stall_record(finish_reason_to_stall_phase[finish_reason],
+                          finish_submit_start, 0);
 
         NV2A_PHASE_TIMER_BEGIN(finish_fence);
         int64_t finish_wait_start = nv2a_stall_start();
@@ -2821,9 +2834,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
              * triggers since there's 2 frames of pipeline headroom. */
             if (r->frame_enqueued[next_frame] &&
                 !qatomic_read(&r->frame_submitted[next_frame])) {
-                while (!qatomic_read(&r->frame_submitted[next_frame])) {
-                    sched_yield();
-                }
+                pgraph_vk_render_thread_wait_submitted(r, next_frame);
             }
             r->frame_enqueued[next_frame] = false;
 

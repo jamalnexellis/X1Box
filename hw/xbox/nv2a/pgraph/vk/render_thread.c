@@ -19,9 +19,11 @@
 
 #include "qemu/osdep.h"
 #include "renderer.h"
+#include "submission-ack.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <sys/system_properties.h>
 #endif
 
 void pgraph_vk_snapshot_state(PGRAPHState *pg, RenderCommandSnapshot *snap)
@@ -159,13 +161,24 @@ static void process_finish(PGRAPHVkState *r, RenderCommand *cmd)
         },
     };
 
+    int64_t submit_start = nv2a_stall_start();
     vkResetFences(r->device, 1, &cmd->finish.fence);
     VK_CHECK(vkQueueSubmit(r->queue, ARRAY_SIZE(submit_infos), submit_infos,
                            cmd->finish.fence));
-    qatomic_set(&r->frame_submitted[cmd->finish.frame_index], true);
+    nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, submit_start, 0);
+    if (r->render_thread.blocking_submit_ack) {
+        /* The predicate and notification share a mutex with the waiter.
+         * Publish only after vkQueueSubmit succeeds, as in the spin path. */
+        vk_submission_ack_publish(&r->render_thread.lock,
+                                  &r->render_thread.submitted_cond,
+                                  &r->frame_submitted[cmd->finish.frame_index]);
+    } else {
+        qatomic_set(&r->frame_submitted[cmd->finish.frame_index], true);
+    }
     qatomic_inc(&r->submit_count);
 
     if (!cmd->finish.deferred) {
+        int64_t fence_start = nv2a_stall_start();
         VkResult wait_result = vkWaitForFences(
             r->device, 1, &cmd->finish.fence, VK_TRUE, UINT64_MAX);
 #ifdef __ANDROID__
@@ -178,10 +191,12 @@ static void process_finish(PGRAPHVkState *r, RenderCommand *cmd)
         }
 #endif
         VK_CHECK(wait_result);
+        nv2a_stall_record(NV2A_STALL_GPU_FENCE, fence_start, 0);
         if (cmd->finish.post_fence_cb) {
             cmd->finish.post_fence_cb(r, NULL, cmd->finish.post_fence_opaque);
         }
     } else if (cmd->finish.post_fence_cb) {
+        int64_t fence_start = nv2a_stall_start();
         VkResult wait_result = vkWaitForFences(
             r->device, 1, &cmd->finish.fence, VK_TRUE, UINT64_MAX);
 #ifdef __ANDROID__
@@ -195,6 +210,7 @@ static void process_finish(PGRAPHVkState *r, RenderCommand *cmd)
         }
 #endif
         VK_CHECK(wait_result);
+        nv2a_stall_record(NV2A_STALL_GPU_FENCE, fence_start, 0);
         cmd->finish.post_fence_cb(r, NULL, cmd->finish.post_fence_opaque);
     }
 
@@ -252,6 +268,7 @@ static void *render_thread_func(void *opaque)
 
         qemu_mutex_unlock(&rt->lock);
 
+        nv2a_stall_record(NV2A_STALL_RENDER_QUEUE, cmd->queued_us, 0);
         switch (cmd->type) {
         case RCMD_FINISH:
             process_finish(r, cmd);
@@ -340,6 +357,7 @@ void pgraph_vk_render_thread_enqueue(PGRAPHVkState *r, RenderCommand *cmd)
 {
     RenderThread *rt = &r->render_thread;
 
+    cmd->queued_us = nv2a_stall_start();
     qemu_event_reset(&rt->idle_event);
 
     qemu_mutex_lock(&rt->lock);
@@ -347,6 +365,21 @@ void pgraph_vk_render_thread_enqueue(PGRAPHVkState *r, RenderCommand *cmd)
     rt->queue_depth++;
     qemu_cond_signal(&rt->cond);
     qemu_mutex_unlock(&rt->lock);
+}
+
+void pgraph_vk_render_thread_wait_submitted(PGRAPHVkState *r, int frame)
+{
+    int64_t ack_start = nv2a_stall_start();
+    RenderThread *rt = &r->render_thread;
+    if (rt->blocking_submit_ack) {
+        vk_submission_ack_wait(&rt->lock, &rt->submitted_cond,
+                               &r->frame_submitted[frame]);
+    } else {
+        while (!qatomic_read(&r->frame_submitted[frame])) {
+            sched_yield();
+        }
+    }
+    nv2a_stall_record(NV2A_STALL_SUBMIT_ACK, ack_start, 0);
 }
 
 void pgraph_vk_render_thread_wait_idle(PGRAPHVkState *r)
@@ -376,10 +409,19 @@ void pgraph_vk_render_thread_init(PGRAPHVkState *r)
     RenderThread *rt = &r->render_thread;
     qemu_mutex_init(&rt->lock);
     qemu_cond_init(&rt->cond);
+    qemu_cond_init(&rt->submitted_cond);
     qemu_event_init(&rt->idle_event, false);
     QSIMPLEQ_INIT(&rt->queue);
     rt->shutdown = false;
     rt->queue_depth = 0;
+#ifdef __ANDROID__
+    char property[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.vk.submit_wait", property);
+    rt->blocking_submit_ack = strcmp(property, "1") == 0;
+    __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+                        "blocking submission acknowledgement=%d",
+                        rt->blocking_submit_ack);
+#endif
     qemu_thread_create(&rt->thread, "pgraph.vk.render",
                        render_thread_func, r, QEMU_THREAD_JOINABLE);
 }
@@ -405,5 +447,6 @@ void pgraph_vk_render_thread_shutdown(PGRAPHVkState *r)
 
     qemu_mutex_destroy(&rt->lock);
     qemu_cond_destroy(&rt->cond);
+    qemu_cond_destroy(&rt->submitted_cond);
     qemu_event_destroy(&rt->idle_event);
 }

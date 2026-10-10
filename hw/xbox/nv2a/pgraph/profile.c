@@ -28,7 +28,7 @@
  * phases and different threads can overlap and must not be added as GPU time. */
 bool nv2a_stall_profile_enabled;
 static GMutex stall_profile_lock;
-static unsigned int stall_slow_events_left = 512;
+static unsigned int stall_slow_events_left = 4096;
 static struct {
     uint64_t count, us, max_us, bytes;
 } stall_phases[NV2A_STALL_PHASE_COUNT];
@@ -36,7 +36,11 @@ static const char *const stall_phase_names[] = {
     "tex_hash", "tex_decode", "tex_stage", "tex_record", "tex_image",
     "tex_reuse_wait", "tex_capacity_wait", "shader_load", "shader_compile",
     "shader_save", "pipeline_create", "pipeline_save", "flush_wait",
-    "finish_submit", "finish_wait"
+    "finish_submit", "finish_wait", "render_queue", "queue_submit",
+    "gpu_fence", "submit_ack", "display_acquire", "display_present",
+    "display_fence", "finish_vertex", "finish_surface_create",
+    "finish_surface_down", "finish_buffer_space", "finish_framebuffer",
+    "finish_presenting", "finish_flip", "finish_flush", "finish_stalled"
 };
 
 void nv2a_stall_profile_init(void)
@@ -46,7 +50,7 @@ void nv2a_stall_profile_init(void)
     __system_property_get("debug.xemu.vk.stall_profile", property);
     nv2a_stall_profile_enabled = strcmp(property, "1") == 0;
     __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
-                        "host graphics stall profile=%d slow_event_quota=512",
+                        "host graphics stall profile=%d slow_event_quota=4096",
                         nv2a_stall_profile_enabled);
 }
 

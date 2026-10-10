@@ -716,4 +716,74 @@ Profiling itself adds overhead and cannot establish an FPS gain. The prepared
 capture must start a fresh process to exercise cold GPU texture state, retain
 the existing shader disk cache, and include movement into new scenery as well
 as the initial state load. Gameplay health and start/end images must pass review.
-Device capture and any resulting optimization remain pending.
+Source `b8cbe9a6227432ced9dc17a17af765139ca16ffd` builds successfully in
+[CI run 38063138109](https://github.com/jamalnexellis/X1Box/actions/runs/38063138109).
+Version `1.2.9-pgr2-perf15` (44) has APK SHA-256
+`4b47ee4d29c2f0beca23bb1f5085a1b34d54a156dfdd47058afbc043d726d8a2`.
+The artifact checksum and signing certificate identity match the expected
+build, and the packaged ARM64 library contains the profiler entry points.
+
+The authorized capture starts a new emulator process, retains shader disk
+caches, resumes the Florence snapshot and then holds the mapped right trigger
+for 25 seconds. Start/end screenshots show coherent road, buildings and HUD;
+the final image shows the car in different scenery. Controller, EEPROM,
+configuration, foreground and unpaused-session checks pass. However, the
+initial segment's final screenshot already shows the car moving, and its first
+image includes a volume overlay. Its marker name in the private analyzer does
+not establish a stationary baseline. No controlled stationary-versus-movement
+comparison or optimization gain is claimed.
+
+The movement segment contains 360 complete flip intervals: median 68.053 ms,
+p95 84.298 ms and maximum 107.924 ms. These are diagnostic frame intervals with
+profiling overhead, not an FPS improvement. Relevant completed operations are:
+
+| Movement phase | Operations | Total host time | Longest operation |
+| --- | ---: | ---: | ---: |
+| Texture decode | 587 | 238.452 ms | 1.297 ms |
+| Texture staging | 587 | 25.249 ms | 0.245 ms |
+| Texture upload recording | 587 | 793.415 ms | 4.075 ms |
+| Texture image/view creation | 209 | 3.837 ms | 0.153 ms |
+| Graphics pipeline creation | 31 | 37.264 ms | 23.331 ms |
+| Pipeline cache persistence | 1 | 8.879 ms | 8.879 ms |
+| Finish submission region | 1,184 | 10,315.114 ms | 36.448 ms |
+| Finish rotation/wait region | 1,184 | 908.008 ms | 6.747 ms |
+
+There are no recorded texture reuse/capacity flushes or shader compilations in
+this segment. The 107.924 ms interval includes a 23.331 ms pipeline creation and
+a 35.239 ms finish operation. The other interval above 100 ms includes ten
+finishes. Nested phases and different threads overlap, so these times must not
+be added into a frame budget. Slow-event quota 512 expires before the movement
+segment, leaving per-frame aggregates but no individual event bounds there.
+The instrumented submission region includes render-worker acknowledgement and
+synchronous fence completion; its large time cannot yet be attributed to
+`vkQueueSubmit` alone, GPU execution alone or a specific finish reason. The
+capture does not prove the cause of every reported new-content stall.
+
+The current pre-test archive is restored through the app UID. Archive checksum,
+HDD and EEPROM hashes match this session's backup, EEPROM retains app ownership,
+all seven diagnostic properties return to their prior values, the debugger
+forward is absent and the emulator is stopped. Raw images, logs and game data
+remain private.
+
+## Submission acknowledgement experiment (perf16)
+
+The next candidate addresses busy yielding while PFIFO waits for the render
+worker to acknowledge a deferred submission. `debug.xemu.vk.submit_wait=1`, off
+by default and latched before worker creation, replaces this loop with a
+condition wait. The atomic submitted predicate is published after successful
+`vkQueueSubmit`; publication and the wait use the same mutex, and spurious
+notifications recheck the predicate. Frame rotation uses the same helper.
+GPU fence waits, command ordering, semaphores, callbacks, texture formats and
+controller handling stay in place. This is a scheduling experiment, not a
+demonstrated FPS gain or a fix for pipeline compilation latency.
+
+The profiler additionally separates worker queue residence, queue submission,
+GPU fence waits, submission acknowledgement, display image acquisition,
+presentation, display fences and nine finish reasons. The slow-event quota is
+4,096 for this larger phase set; per-flip aggregates still continue afterwards.
+Categories remain nested host wall times. A standalone fixture exercises the
+production condition handshake with POSIX-backed QEMU API adapters: prior
+notification, spurious wakeups, two independent frame predicates and 100 rounds
+of slot reuse. It does not validate Android scheduling, the QEMU adapters or
+Vulkan correctness. Build, fixture execution and a fresh device comparison
+remain pending.
