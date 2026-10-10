@@ -837,7 +837,6 @@ list(APPEND XEMU_CORE_SOURCES
   "${REPO_ROOT}/crypto/tlscreds.c"
   "${REPO_ROOT}/crypto/tlssession.c"
   "${REPO_ROOT}/migration/colo-stubs.c"
-  "${REPO_ROOT}/stubs/gdbstub.c"
   "${REPO_ROOT}/stubs/target-get-monitor-def.c"
   "${REPO_ROOT}/stubs/target-monitor-defs.c"
   "${REPO_ROOT}/stubs/xen-hw-stub.c"
@@ -914,6 +913,25 @@ list(APPEND XEMU_CORE_SOURCES
   "${CMAKE_CURRENT_LIST_DIR}/qcrypto_random_android.c"
   "${CMAKE_CURRENT_LIST_DIR}/xemu_settings_android.cc"
 )
+
+# --- Guest debugger register description ---
+# The empty GDB stub leaves the i386 core with no readable registers. Generate
+# the same table as QEMU's Meson build so opt-in Android guest debugging works.
+set(XEMU_GDB_FEATURES "${CMAKE_BINARY_DIR}/gdb-features.c")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${REPO_ROOT}/scripts/feature_to_c.py"
+  "${REPO_ROOT}/gdb-xml/i386-32bit.xml"
+)
+execute_process(
+  COMMAND "${PYTHON_EXECUTABLE}" "${REPO_ROOT}/scripts/feature_to_c.py"
+          "${REPO_ROOT}/gdb-xml/i386-32bit.xml"
+  OUTPUT_FILE "${XEMU_GDB_FEATURES}"
+  RESULT_VARIABLE XEMU_GDB_FEATURE_RESULT
+)
+if(NOT XEMU_GDB_FEATURE_RESULT EQUAL 0)
+  message(FATAL_ERROR "GDB register feature generation failed")
+endif()
+list(APPEND XEMU_CORE_SOURCES "${XEMU_GDB_FEATURES}")
 
 # --- QAPI/Trace generation ---
 set(QAPI_GEN_DIR "${CMAKE_BINARY_DIR}/qapi")

@@ -460,6 +460,8 @@ this experiment must not be described as a measured FPS improvement.
 
 `debug.xemu.gdb=1` enables the existing guest debugger on `127.0.0.1:9009` for
 ADB forwarding. It is off by default and does not bind a network-facing address.
+The Android build now generates QEMU's i386 register feature table from its XML
+description instead of linking the empty feature stub.
 This permits reading the registers and guest memory at the identified polling
 instruction to determine what the CPU is waiting for. Debugging captures and
 guest data stay outside the repository, and FPS comparisons use debugging off.
