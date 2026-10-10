@@ -1668,12 +1668,15 @@ static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
     PGRAPHVkState *r = pg->vk_renderer_state;
     const TextureShape *shape = &t->key.state;
     VkFormat format = t->image_config.format;
+    bool linear = kelvin_color_format_info_map[shape->color_format].linear;
     VkSurfaceCopyPolicy policy = {
         .width = shape->width, .height = shape->height, .depth = shape->depth,
         .dimensions = shape->dimensionality, .levels = shape->levels,
         .layers = t->image_config.array_layers, .scale = pg->surface_scale_factor,
         .source_width = s->width, .source_height = s->height,
-        .cubemap = shape->cubemap, .border = shape->border, .color = s->color,
+        .cubemap = shape->cubemap,
+        .border = vk_surface_copy_storage_border(shape->border, linear),
+        .color = s->color,
         .active = s->access_cb != NULL,
         .initialized = s->initialized && s->image_layout != VK_IMAGE_LAYOUT_UNDEFINED,
         .upload_pending = s->upload_pending, .download_pending = s->download_pending,
@@ -1688,9 +1691,41 @@ static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
             t->image_config.mip_levels == 1,
         .distinct_images = s->image && t->image && s->image != t->image,
     };
-    return vk_surface_copy_eligible(&policy) &&
-        (t->current_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ||
-         t->current_layout == VK_IMAGE_LAYOUT_UNDEFINED);
+    uint32_t reasons = vk_surface_copy_rejections(&policy);
+    if (t->current_layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+        t->current_layout != VK_IMAGE_LAYOUT_UNDEFINED) {
+        reasons |= VK_SURFACE_COPY_LAYOUT;
+    }
+#ifdef __ANDROID__
+    static unsigned rejected_count;
+    static uint32_t last_width, last_height, last_reasons;
+    if (reasons && rejected_count < 24 &&
+        (last_width != policy.width || last_height != policy.height ||
+         last_reasons != reasons) && nv2a_stall_start()) {
+        rejected_count++;
+        last_width = policy.width;
+        last_height = policy.height;
+        last_reasons = reasons;
+        __android_log_print(ANDROID_LOG_INFO, "xemu-stall-detail",
+            "surface queued-copy rejected: reasons=%u width=%u height=%u "
+            "depth=%u dimensions=%u levels=%u layers=%u scale=%u "
+            "linear=%d border_flag=%d storage_border=%d color=%d active=%d "
+            "initialized=%d upload=%d download=%d copy_compatible=%d "
+            "distinct=%d source_fmt=%d destination_fmt=%d source_layout=%d "
+            "destination_layout=%d allocation_width=%u allocation_height=%u "
+            "allocation_depth=%u allocation_levels=%u allocation_type=%d usage=%u",
+            reasons, policy.width, policy.height, policy.depth, policy.dimensions,
+            policy.levels, policy.layers, policy.scale, linear, shape->border,
+            policy.border, policy.color, policy.active, policy.initialized,
+            policy.upload_pending, policy.download_pending,
+            policy.byte_copy_compatible, policy.distinct_images,
+            s->host_fmt.vk_format, format, s->image_layout, t->current_layout,
+            t->image_config.width, t->image_config.height, t->image_config.depth,
+            t->image_config.mip_levels, t->image_config.image_type,
+            t->image_config.usage);
+    }
+#endif
+    return reasons == 0;
 #else
     (void)pg; (void)s; (void)t;
     return false;

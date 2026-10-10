@@ -1359,3 +1359,54 @@ with two slots and cube copy on throughout. This retains an experimental cube
 baseline; it does not compare against stock. Three full five-second windows
 per capture, all eleven reviewed images, runtime/input/mode checks and exact
 current archive/HDD/EEPROM/property/app-UID restoration remain required.
+
+The subsequent guarded perf23 device run installs successfully and passes the
+policy, cube, six native-color and six mixed BGRA/RGBA generated pixel cases
+on the Adreno 830, including both directions at 1280x480. Device synchronization
+validation is not enabled. The profile-on two-slot trace contains 249 initial
+complete flips (median 60.811 ms, p95 73.210 ms, maximum 88.568 ms) and 363
+moving flips (median 56.022 ms, p95 77.773 ms, maximum 119.521 ms). All three
+images are reviewed: stationary neutral controls and coherent road/buildings/HUD,
+then movement to 49 km/h with released throttle. This checks a limited scene
+and A/RT inputs, not every control or game scenario. The queued candidate does
+not engage, so the isolated FPS comparison is skipped and no gain is accepted.
+Readback routes and shader compilation remain zero. Unlike the earlier
+three-slot trace, `tex_reuse_wait` is zero throughout; `finish_wait` averages
+26.607 ms per initial flip and 18.153 ms moving. These host waits overlap fence
+measurements and are not pure GPU execution time. Thermal status is zero,
+which does not establish fixed clocks. Runtime mode/controller/43-phase
+checks pass. Current archive/HDD/EEPROM, all eleven originally empty properties
+and app ownership are independently verified after restoration, with emulator
+stopped and phone released before the original deadline.
+
+## Correcting linear-border eligibility and exposing rejection reasons (perf24)
+
+Code inspection finds another incorrect restriction in the candidate: it uses
+the raw NV2A border-source flag as an image-storage-border test. Existing
+`texture_can_compute_upload`, texture layout and fragment-state code already
+distinguish these: linear textures use their explicit rectangle/pitch, while
+only non-linear textures receive the virtual storage border. Perf24 normalizes
+this flag with a shared pure predicate for the queued-copy policy. Exact
+source/allocated destination dimensions, one mip/layer, native or permitted
+byte-compatible format pairs, stable resources and all pending/lifetime checks
+still apply. Non-linear storage borders remain rejected. This corrects a code
+restriction; perf23 logs do not establish it as the actual game rejection cause.
+
+The policy now exposes geometry/border/source/pending/format-allocation/image
+rejection bits, with a separate layout bit. Opt-in profile-on logs are bounded
+to 24 changing shape/reason entries and print only shape/format/state flags,
+without guest addresses, image handles or pixels. This makes remaining failed
+eligibility observable instead of inferring it from non-engagement. Policy
+fixtures cover linear border flags, retained non-linear rejection and combined
+reason bits. GPU barriers and copy helper are unchanged. Defaults remain off
+and two slots; host/Android compilation and actual-device checks are pending.
+
+The next planned comparison should distinguish queue depth and copy rather
+than assuming a two-slot texture-reuse wait: perf23 has no such wait. A guarded
+nine-minute test is being prepared to diagnose the three-slot queued candidate
+and compare all four fixed-scene profile-off combinations, twice each, in
+symmetric order: 2/off, 3/off, 2/on, 3/on, 3/on, 2/on, 3/off, 2/off.
+Cube copy stays on. The on modes require actual target-format copy engagement;
+the three-slot on mode additionally requires the cached host-wait bypass.
+All images/runtime checks and exact current-state restoration remain required.
+This is preparation, not a new result or accepted FPS improvement.

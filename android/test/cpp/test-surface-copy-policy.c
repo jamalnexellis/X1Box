@@ -15,6 +15,17 @@ int main(void)
     VkSurfaceCopyPolicy wide = valid;
     wide.width = wide.source_width = 1280;
     assert(vk_surface_copy_eligible(&wide));
+    assert(!vk_surface_copy_storage_border(false, false));
+    assert(!vk_surface_copy_storage_border(false, true));
+    assert(!vk_surface_copy_storage_border(true, true));
+    assert(vk_surface_copy_storage_border(true, false));
+    wide.border = vk_surface_copy_storage_border(true, true);
+    assert(vk_surface_copy_rejections(&wide) == 0);
+    wide.border = vk_surface_copy_storage_border(true, false);
+    assert(vk_surface_copy_rejections(&wide) == VK_SURFACE_COPY_BORDER);
+    wide.upload_pending = true;
+    assert(vk_surface_copy_rejections(&wide) ==
+           (VK_SURFACE_COPY_BORDER | VK_SURFACE_COPY_PENDING));
 #define REJECT(field, value) do { VkSurfaceCopyPolicy p = valid; \
     p.field = value; assert(!vk_surface_copy_eligible(&p)); } while (0)
     REJECT(width, 0); REJECT(height, 0); REJECT(width, 4097);
@@ -26,6 +37,14 @@ int main(void)
     REJECT(download_pending, true); REJECT(byte_copy_compatible, false);
     REJECT(distinct_images, false);
 #undef REJECT
+    VkSurfaceCopyPolicy rejected = valid;
+    rejected.width = 0;
+    rejected.color = false;
+    rejected.byte_copy_compatible = false;
+    rejected.distinct_images = false;
+    assert(vk_surface_copy_rejections(&rejected) ==
+           (VK_SURFACE_COPY_GEOMETRY | VK_SURFACE_COPY_SOURCE |
+            VK_SURFACE_COPY_FORMAT_ALLOCATION | VK_SURFACE_COPY_IMAGES));
     puts("PASS surface queued-copy eligibility and fallbacks");
     return 0;
 }
