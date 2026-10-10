@@ -1392,6 +1392,16 @@ byte-compatible format pairs, stable resources and all pending/lifetime checks
 still apply. Non-linear storage borders remain rejected. This corrects a code
 restriction; perf23 logs do not establish it as the actual game rejection cause.
 
+Inspection also finds that the policy compares the allocation against the
+base format table instead of `texture_format_for_shape`. Compute upload can
+select RGBA8 storage with an adjusted component mapping for a BGRA8 texture;
+the observed BGRA8-source/RGBA8-destination pair is consistent with this path.
+Perf24 checks the effective format selected for the cached shape/address.
+It preserves the existing allocation/view/component mapping and byte-copy
+semantics. A different effective format or allocation mismatch still rejects
+the candidate. Runtime rejection/engagement logs remain necessary to establish
+which conditions apply to the actual game texture.
+
 The policy now exposes geometry/border/source/pending/format-allocation/image
 rejection bits, with a separate layout bit. Opt-in profile-on logs are bounded
 to 24 changing shape/reason entries and print only shape/format/state flags,

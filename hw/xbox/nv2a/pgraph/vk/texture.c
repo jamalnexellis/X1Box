@@ -1682,7 +1682,7 @@ static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
         .upload_pending = s->upload_pending, .download_pending = s->download_pending,
         .byte_copy_compatible = s->host_fmt.aspect == VK_IMAGE_ASPECT_COLOR_BIT &&
             vk_surface_copy_formats_compatible(s->host_fmt.vk_format, format) &&
-            format == r->texture_format_map[shape->color_format].vk_format &&
+            format == texture_format_for_shape(r, *shape, t->key.address).vk_format &&
             t->image_config.image_type == VK_IMAGE_TYPE_2D &&
             (t->image_config.usage & (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) ==
                 (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT) &&
