@@ -71,4 +71,18 @@ static inline bool vk_cube_copy_needs_refresh(const VkCubeCopyCache *cache,
 {
     return !cache->valid || !vk_cube_copy_keys_equal(&cache->key, key);
 }
+
+static inline bool vk_cube_copy_has_source(const VkCubeCopyKey *key,
+                                           uint64_t image)
+{
+    if (!image) {
+        return false;
+    }
+    for (unsigned i = 0; i < 6; i++) {
+        if (key->image[i] == image) {
+            return true;
+        }
+    }
+    return false;
+}
 #endif

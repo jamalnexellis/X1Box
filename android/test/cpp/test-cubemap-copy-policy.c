@@ -72,7 +72,10 @@ int main(void)
     cache.key = key;
     cache.valid = true;
     assert(!vk_cube_copy_needs_refresh(&cache, &key));
+    assert(!vk_cube_copy_has_source(&key, 0));
+    assert(!vk_cube_copy_has_source(&key, 100));
     for (unsigned i = 0; i < 6; i++) {
+        assert(vk_cube_copy_has_source(&key, key.image[i]));
         VkCubeCopyKey changed = key;
         changed.image[i]++;
         assert(vk_cube_copy_needs_refresh(&cache, &changed));

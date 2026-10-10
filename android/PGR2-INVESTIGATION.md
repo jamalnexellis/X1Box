@@ -1081,6 +1081,8 @@ the active surface-list generation to detect retired/recreated sources. GPU
 source changes are checked before draw fast paths can skip texture binding.
 CPU dirty aliases invalidate the copy identity. Returning from a cube copy to
 the CPU path forces a fresh hash/upload, even if old CPU VRAM appeared clean.
+Queued source writes also force binding/recording before their generations
+advance. Unchanged cubes preserve batching of unrelated queued draws.
 
 Prior queued draws are recorded first. Shared production copy code transitions
 all six sources and the destination with explicit same-queue barriers, copies

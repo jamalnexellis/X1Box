@@ -1825,9 +1825,22 @@ static bool get_cube_copy_sources(PGRAPHState *pg, const TextureShape *shape,
             VK_FORMAT_R5G6B5_UNORM_PACK16, faces);
 }
 
+static bool cube_has_pending_source_draws(PGRAPHVkState *r,
+                                          const VkCubeCopyKey *key)
+{
+    /* Deferred draw generations advance when entries are emitted. A queued
+     * write to a source must be emitted before checking/reusing its cube. */
+    return (r->reorder_window.count > 0 || r->draw_queue.count > 0) &&
+        r->color_binding &&
+        vk_cube_copy_has_source(key, (uint64_t)r->color_binding->image);
+}
+
 static bool cube_binding_needs_refresh(PGRAPHState *pg, TextureBinding *binding)
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
+    if (cube_has_pending_source_draws(r, &binding->cube_copy_cache.key)) {
+        return true;
+    }
     if (binding->cube_copy_cache.valid &&
         binding->cube_seen_draw_gen == r->surface_draw_gen &&
         binding->cube_seen_list_gen == r->surface_list_gen) {
@@ -1851,6 +1864,20 @@ static void copy_cube_surfaces_to_texture(PGRAPHState *pg,
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
     NV2AState *d = container_of(pg, NV2AState, pgraph);
+    VkCubeCopyKey before = { .surface_list_gen = r->surface_list_gen };
+    for (unsigned i = 0; i < 6; i++) {
+        before.image[i] = (uint64_t)sources[i]->image;
+        before.draw_time[i] = sources[i]->draw_time;
+        before.draw_generation[i] = sources[i]->draw_generation;
+    }
+    if (!vk_cube_copy_needs_refresh(&texture->cube_copy_cache, &before) &&
+        !cube_has_pending_source_draws(r, &before)) {
+        /* An unchanged cube does not break batching of unrelated draws. */
+        texture->cube_seen_draw_gen = r->surface_draw_gen;
+        texture->cube_seen_list_gen = r->surface_list_gen;
+        texture->possibly_dirty = false;
+        return;
+    }
     /* Record prior users before an in-place GPU update. Descriptors and
      * allocations stay live under existing retirement policies; GPU barriers
      * preserve required queue dependencies without a host readback wait. */
