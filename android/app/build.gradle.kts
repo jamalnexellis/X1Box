@@ -61,8 +61,8 @@ android {
     minSdk = 29
     targetSdk = 36
 
-    versionCode = 35
-    versionName = "1.2.9-pgr2-perf6"
+    versionCode = 36
+    versionName = "1.2.9-pgr2-perf7"
 
     ndk {
       abiFilters += listOf("arm64-v8a")
@@ -109,6 +109,11 @@ android {
       // Keep locally signed development builds installable alongside the
       // Play-signed release so device testing never requires clearing user data.
       applicationIdSuffix = ".dev"
+      externalNativeBuild {
+        cmake {
+          arguments += listOf("-DXEMU_ENABLE_LTO=ON")
+        }
+      }
       ndk {
         debugSymbolLevel = "NONE"
       }
