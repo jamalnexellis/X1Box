@@ -1402,6 +1402,12 @@ semantics. A different effective format or allocation mismatch still rejects
 the candidate. Runtime rejection/engagement logs remain necessary to establish
 which conditions apply to the actual game texture.
 
+Engagement diagnostics also retain up to eight distinct mixed-format shapes,
+so an early boot/menu copy cannot hide the later 1280x480 target behind a
+single first-use log. The cached-wait bypass marker is emitted only after
+the copy function confirms successful queued recording following its state
+recheck; a rejected recheck/fallback does not count as an actual bypass.
+
 The policy now exposes geometry/border/source/pending/format-allocation/image
 rejection bits, with a separate layout bit. Opt-in profile-on logs are bounded
 to 24 changing shape/reason entries and print only shape/format/state flags,

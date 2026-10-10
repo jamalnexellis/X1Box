@@ -1759,12 +1759,12 @@ static void wait_texture_reuse(PGRAPHState *pg, TextureBinding *texture,
 #endif
 }
 
-static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
+static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
                                     TextureBinding *texture, bool queue_copy)
 {
     if (!surface->color) {
         copy_zeta_surface_to_texture(pg, surface, texture);
-        return;
+        return false;
     }
 
     PGRAPHVkState *r = pg->vk_renderer_state;
@@ -1804,18 +1804,34 @@ static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
                                 "surface queued-copy path engaged: byte-preserving color 2D");
             engaged = true;
         }
-        static bool reinterpret_engaged;
-        if (!reinterpret_engaged &&
-            surface->host_fmt.vk_format != texture->image_config.format) {
-            __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
-                "surface queued-copy reinterpret path engaged: source_fmt=%d "
-                "destination_fmt=%d width=%u height=%u",
-                surface->host_fmt.vk_format, texture->image_config.format,
-                surface->width, surface->height);
-            reinterpret_engaged = true;
+        static struct {
+            VkFormat source, destination;
+            uint32_t width, height;
+        } reinterpret_shapes[8];
+        static unsigned reinterpret_count;
+        if (surface->host_fmt.vk_format != texture->image_config.format) {
+            bool seen = false;
+            for (unsigned i = 0; i < reinterpret_count; i++) {
+                seen |= reinterpret_shapes[i].source == surface->host_fmt.vk_format &&
+                    reinterpret_shapes[i].destination == texture->image_config.format &&
+                    reinterpret_shapes[i].width == surface->width &&
+                    reinterpret_shapes[i].height == surface->height;
+            }
+            if (!seen && reinterpret_count < ARRAY_SIZE(reinterpret_shapes)) {
+                reinterpret_shapes[reinterpret_count].source = surface->host_fmt.vk_format;
+                reinterpret_shapes[reinterpret_count].destination = texture->image_config.format;
+                reinterpret_shapes[reinterpret_count].width = surface->width;
+                reinterpret_shapes[reinterpret_count].height = surface->height;
+                reinterpret_count++;
+                __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                    "surface queued-copy reinterpret path engaged: source_fmt=%d "
+                    "destination_fmt=%d width=%u height=%u",
+                    surface->host_fmt.vk_format, texture->image_config.format,
+                    surface->width, surface->height);
+            }
         }
 #endif
-        return;
+        return true;
     }
     TextureShape *state = &texture->key.state;
     VkColorFormatInfo vkf = r->texture_format_map[state->color_format];
@@ -1877,6 +1893,7 @@ static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
 #endif
 
     texture->draw_time = surface->draw_time;
+    return false;
 }
 
 static unsigned int vk_format_texel_size(VkFormat format)
@@ -2623,20 +2640,12 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
                 bool can_direct_bind = can_bind_surface_direct(r, surface);
                 bool queue_copy = !can_direct_bind &&
                                   can_queue_surface_copy(pg, surface, snode);
+                bool cached_inflight =
+                    snode->submit_time + r->num_active_frames > r->submit_count;
                 if (!queue_copy &&
-                    snode->submit_time + r->num_active_frames > r->submit_count) {
+                    cached_inflight) {
                     wait_texture_reuse(pg, snode, surface);
                 }
-
-#ifdef __ANDROID__
-                static bool bypass_logged;
-                if (queue_copy && !bypass_logged &&
-                    snode->submit_time + r->num_active_frames > r->submit_count) {
-                    __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
-                        "surface queued-copy bypassed host texture reuse wait");
-                    bypass_logged = true;
-                }
-#endif
 
                 if (can_direct_bind) {
                     VkImageLayout direct_layout;
@@ -2675,7 +2684,17 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
                     }
 #endif
                 } else {
-                    copy_surface_to_texture(pg, surface, snode, queue_copy);
+                    bool queued = copy_surface_to_texture(pg, surface, snode, queue_copy);
+#ifdef __ANDROID__
+                    static bool bypass_logged;
+                    if (queued && cached_inflight && !bypass_logged) {
+                        __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                            "surface queued-copy bypassed host texture reuse wait");
+                        bypass_logged = true;
+                    }
+#else
+                    (void)queued;
+#endif
                 }
                 did_s2t_copy = true;
             } else if (can_bind_surface_direct(r, surface)) {
