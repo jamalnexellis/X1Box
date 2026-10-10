@@ -958,5 +958,27 @@ The Android glslang build already disables SPIRV-Tools optimization. Its
 also limits that optimizer to HLSL legalization or size optimization. Merely
 turning off an optimizer is not a substantiated fix for the captured GLSL
 compilation stall. This build measures the active stages before choosing a
-compiler change. CI, artifact checks and fresh device availability are
-pending. Perf17's presentation-reuse mode remains off.
+compiler change. Perf17's presentation-reuse mode remains off.
+
+Source `db3c14d235eb56ba20d1acfe561a0a81d492d0aa` builds successfully in
+[CI run 38072571578](https://github.com/jamalnexellis/X1Box/actions/runs/38072571578).
+The downloaded version `1.2.9-pgr2-perf18` (47), package
+`com.izzy2lost.x1box.dev`, has APK SHA-256
+`36f180751e2600d200335a543d9c1635653e77ed829ad42ab8c4ef73f715ce8d`.
+It matches CI's checksum and retains the previous signer certificate identity.
+Its native library contains all eleven compiler/readback detail phase names
+and the split-frame header. Host presentation-policy, submission-ordering,
+XISO and uniform fixtures pass with ASan/UBSan; Android native fixtures and
+texture shaders compile. These are build and artifact checks, not device
+performance or full APK signature validation.
+
+The next private three-minute capture preserves the then-current app-owned
+state and all nine properties before installing. It temporarily stages one
+known cached shader to try to reproduce the captured first-use compilation,
+records its original hash, loads the same snapshot and drives into new
+scenery with complete press/release input. Foreground, controller, runtime
+mode and trace completeness guards apply. Restoration independently checks
+the current archive, HDD, EEPROM, original shader and properties. Cache
+extraction merges files; newly generated cache entries may remain. No entire
+cache reset is planned. Fresh phone availability and device validation remain
+pending; this APK is diagnostic and has no accepted FPS improvement.
