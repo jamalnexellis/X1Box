@@ -1617,6 +1617,12 @@ extern "C" int SDL_main(int argc, char* argv[]) {
 
     std::vector<std::string> arg_storage;
     arg_storage.emplace_back("xemu");
+    char reclaim_regs[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.tcg.reclaim_regs", reclaim_regs);
+    // Only an explicit zero selects the old register allocation for A/B tests.
+    const bool reclaim_tcg_regs = strcmp(reclaim_regs, "0") != 0;
+    setenv("XEMU_TCG_RECLAIM_REGS", reclaim_tcg_regs ? "1" : "0", 1);
+    LogInfoInt("TCG reclaim unused RAM registers=%d", reclaim_tcg_regs ? 1 : 0);
     // Opt-in developer profiling: relate generated ARM PCs to Xbox x86 PCs.
     // Keep dumps in internal app storage and out of normal gameplay sessions.
     char jit_profile[PROP_VALUE_MAX] = {};

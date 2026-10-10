@@ -47,9 +47,7 @@ static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 static const int tcg_target_reg_alloc_order[] = {
     TCG_REG_X20, TCG_REG_X21, TCG_REG_X22, TCG_REG_X23,
     TCG_REG_X24, TCG_REG_X25, TCG_REG_X26,
-#ifndef XBOX
-    TCG_REG_X27, /* reserved for xbox_ram_fp struct pointer when XBOX */
-#endif
+    TCG_REG_X27, /* reserved below only when the Xbox RAM path needs it */
     TCG_REG_X28, /* we will reserve this for guest_base if configured */
 
     TCG_REG_X8, TCG_REG_X9, TCG_REG_X10, TCG_REG_X11,
@@ -1746,7 +1744,8 @@ static TCGLabelQemuLdst *prepare_host_addr(TCGContext *s, HostAddress *h,
         tcg_insn_unit *xbox_fast_done = NULL;
         tcg_insn_unit *xbox_vram_done = NULL;
 
-        if (is_ld && xbox_ram_size) {
+        if (is_ld && xbox_ram_size &&
+            tcg_regset_test_reg(s->reserved_regs, TCG_REG_XBOX_RAM_BASE)) {
             uint64_t ram_mask = ~(xbox_ram_size - 1);
             if (addr_type == TCG_TYPE_I32) {
                 ram_mask &= 0xFFFFFFFFULL;
@@ -4294,16 +4293,17 @@ static void tcg_target_qemu_prologue(TCGContext *s)
     }
 
 #ifdef XBOX
-    /*
-     * X27 = &xbox_ram_fp (struct address).
-     * The fast path dereferences X27 at runtime to check active flag,
-     * then loads host_base. Avoids init-order problems since the address
-     * is stable even before xbox_memory_init() runs.
-     */
-    tcg_out_movi(s, TCG_TYPE_PTR, TCG_REG_XBOX_RAM_BASE,
-                 (uintptr_t)&xbox_ram_fp);
-    tcg_regset_set_reg(s->reserved_regs, TCG_REG_XBOX_RAM_BASE);
-    tcg_regset_set_reg(s->reserved_regs, TCG_REG_XBOX_HOST_BASE);
+    /* The RAM shortcut has no configured mapping in the current Xbox
+     * machine (xbox_ram_size == 0). Reserving X26/X27 anyway deprives
+     * ordinary soft-MMU code of two callee-saved registers. Keep the
+     * original allocation available for controlled comparisons. */
+    const char *reclaim_regs = getenv("XEMU_TCG_RECLAIM_REGS");
+    if (xbox_ram_size || (reclaim_regs && strcmp(reclaim_regs, "0") == 0)) {
+        tcg_out_movi(s, TCG_TYPE_PTR, TCG_REG_XBOX_RAM_BASE,
+                     (uintptr_t)&xbox_ram_fp);
+        tcg_regset_set_reg(s->reserved_regs, TCG_REG_XBOX_RAM_BASE);
+        tcg_regset_set_reg(s->reserved_regs, TCG_REG_XBOX_HOST_BASE);
+    }
 #endif
 
     tcg_out_mov(s, TCG_TYPE_PTR, TCG_AREG0, tcg_target_call_iarg_regs[0]);
@@ -4342,7 +4342,8 @@ static void tcg_out_tb_start(TCGContext *s)
     tcg_out_bti(s, BTI_J);
 
 #ifdef XBOX
-    if (xbox_ram_size) {
+    if (xbox_ram_size &&
+        tcg_regset_test_reg(s->reserved_regs, TCG_REG_XBOX_RAM_BASE)) {
         /*
          * Preamble: check active/cb_count once per TB and cache
          * host_base in X26.  X27 (&xbox_ram_fp) stays unchanged
