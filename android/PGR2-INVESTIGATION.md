@@ -1023,3 +1023,24 @@ The existing GPU-copy eligibility, downloads and rendering remain unchanged.
 This is a targeted diagnostic; a GPU-only conversion must match the observed
 layout before it can be a correctness-preserving optimization. Build,
 artifact checks and a fresh capture are pending.
+
+The first perf19 CI attempt stops before native compilation because the NDK
+download ends with `Premature EOF`. Retrying the identical source
+`5ec8170c2255bc8cc08e58ef97dff9deb6e6c9de` succeeds in
+[CI run 38073974631](https://github.com/jamalnexellis/X1Box/actions/runs/38073974631).
+Downloaded version `1.2.9-pgr2-perf19` (48) has APK SHA-256
+`83b9773743ceb41b149d1c5b0c35772ecbcd17a065a7306d4b159df3d0c60b99`.
+Package/version parsing, the shape-detail string and compiler/readback phases
+are verified in the artifact; its checksum matches CI and its certificate
+identity matches perf18. Host ASan/UBSan fixtures pass and Android native
+fixtures/texture shaders compile. No device install, shape capture or FPS
+gain is established yet. A guarded current-state-preserving three-minute
+capture is prepared without staging shader cache entries; fresh availability
+is requested after these checks.
+
+Further private perf18 event analysis finds 540 slow deferred-completion
+regions completely contained in texture-range fallback parent regions. All
+541 logged slow texture-range operations request the same byte length. The
+4,096-event quota expires during the trace, so these events are a bounded
+subset; complete per-flip counters remain available. Requested byte length
+alone does not establish texture dimensions, format or cubemap layout.
