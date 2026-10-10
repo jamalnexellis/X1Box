@@ -2065,8 +2065,13 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         else { OPT_STAT_INC(dif_scan_run); }
 
         if (!skip_surf_scan) {
+            int64_t readback_start = nv2a_stall_start();
             bool had_overlap = pgraph_vk_download_surfaces_in_range_if_dirty(
                 pg, texture_vram_offset, texture_length);
+            if (had_overlap) {
+                nv2a_stall_record(NV2A_STALL_TEXTURE_RANGE_READBACK,
+                                 readback_start, texture_length);
+            }
             range_ent->vram_addr = texture_vram_offset;
             range_ent->length = texture_length;
             range_ent->had_overlap = had_overlap;

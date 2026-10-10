@@ -39,6 +39,13 @@ static void download_surface_deferred(NV2AState *d, SurfaceBinding *surface);
 
 static bool g_surface_addr_map_missing_logged;
 
+static void finish_surface_readback(PGRAPHState *pg, NV2AStallPhase route)
+{
+    int64_t start = nv2a_stall_start();
+    pgraph_vk_finish(pg, VK_FINISH_REASON_SURFACE_DOWN);
+    nv2a_stall_record(route, start, 0);
+}
+
 static GHashTable *surface_addr_map_get(PGRAPHVkState *r, const char *op,
                                         bool allow_recreate)
 {
@@ -596,7 +603,7 @@ void pgraph_vk_download_surface_complete_deferred(NV2AState *d)
                                  VK_TRUE, UINT64_MAX));
     } else {
         OPT_STAT_INC(sd_complete_def);
-        pgraph_vk_finish(pg, VK_FINISH_REASON_SURFACE_DOWN);
+        finish_surface_readback(pg, NV2A_STALL_READBACK_DEFERRED);
     }
 
     int64_t _t1 = nv2a_clock_ns();
@@ -672,7 +679,7 @@ static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
 #else
     if (r->in_command_buffer &&
         surface->draw_time >= r->command_buffer_start_time) {
-        pgraph_vk_finish(pg, VK_FINISH_REASON_SURFACE_DOWN);
+        finish_surface_readback(pg, NV2A_STALL_READBACK_BUFFER);
     } else if (compute_needs_finish) {
         OPT_STAT_INC(buf_compute_full);
         pgraph_vk_finish(pg, VK_FINISH_REASON_NEED_BUFFER_SPACE);
@@ -1040,7 +1047,7 @@ static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
 #if OPT_SURF_TO_TEX_INLINE
     pgraph_vk_end_nondraw_commands(pg, cmd);
     OPT_STAT_INC(sd_dl_to_buf);
-    pgraph_vk_finish(pg, VK_FINISH_REASON_SURFACE_DOWN);
+    finish_surface_readback(pg, NV2A_STALL_READBACK_BUFFER);
 #else
     pgraph_vk_end_single_time_commands(pg, cmd);
 #endif
@@ -1284,7 +1291,7 @@ void pgraph_vk_process_pending_downloads(NV2AState *d)
     }
 
     OPT_STAT_INC(sd_pending_dl);
-    pgraph_vk_finish(pg, VK_FINISH_REASON_SURFACE_DOWN);
+    finish_surface_readback(pg, NV2A_STALL_READBACK_PENDING);
 
     pgraph_vk_complete_staged_downloads(d, r);
 
@@ -1362,7 +1369,7 @@ void pgraph_vk_download_dirty_surfaces(NV2AState *d)
     }
 
     OPT_STAT_INC(sd_dirty_dl);
-    pgraph_vk_finish(pg, VK_FINISH_REASON_SURFACE_DOWN);
+    finish_surface_readback(pg, NV2A_STALL_READBACK_DIRTY);
 
     pgraph_vk_complete_staged_downloads(d, r);
 
@@ -1479,7 +1486,9 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
     qemu_mutex_unlock(&d->pgraph.lock);
 
     if (wait_for_downloads) {
+        int64_t start = nv2a_stall_start();
         wait_for_surface_downloads(d);
+        nv2a_stall_record(NV2A_STALL_CPU_READBACK_WAIT, start, len);
     }
 }
 
@@ -2835,7 +2844,7 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 if (surface->draw_dirty) {
                     if (r->in_command_buffer) {
                         OPT_STAT_INC(sd_eviction);
-                        pgraph_vk_finish(pg, VK_FINISH_REASON_SURFACE_DOWN);
+                        finish_surface_readback(pg, NV2A_STALL_READBACK_EVICT);
                     } else {
                         OPT_STAT_INC(sd_eviction_nocb);
                     }

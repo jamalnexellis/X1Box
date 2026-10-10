@@ -41,7 +41,10 @@ static const char *const stall_phase_names[] = {
     "display_fence", "finish_vertex", "finish_surface_create",
     "finish_surface_down", "finish_buffer_space", "finish_framebuffer",
     "finish_presenting", "finish_flip", "finish_flush", "finish_stalled",
-    "display_reuse"
+    "display_reuse", "shader_preprocess", "shader_parse", "shader_link",
+    "shader_spirv", "readback_deferred", "readback_buffer", "readback_pending",
+    "readback_dirty", "readback_evict", "texture_range_readback",
+    "cpu_readback_wait"
 };
 
 void nv2a_stall_profile_init(void)
@@ -90,15 +93,24 @@ void nv2a_stall_frame(int64_t now_us)
     if (!nv2a_stall_profile_enabled) {
         return;
     }
-    GString *line = g_string_new(NULL);
-    g_string_append_printf(line, "frame=%" PRIu64 " end_us=%" PRId64
-                           " interval_us=%" PRId64,
-                           ++frame, now_us,
-                           previous_flip_us ? now_us - previous_flip_us : 0);
+    /* Bound each Android log payload even with maximum-width counters.
+     * Parts share one frame/time identity and one atomic counter snapshot. */
+    enum { PHASES_PER_LINE = 32,
+           LINE_COUNT = (NV2A_STALL_PHASE_COUNT + PHASES_PER_LINE - 1) /
+                        PHASES_PER_LINE };
+    GString *lines[LINE_COUNT];
+    int64_t interval_us = previous_flip_us ? now_us - previous_flip_us : 0;
+    ++frame;
+    for (int part = 0; part < LINE_COUNT; part++) {
+        lines[part] = g_string_new(NULL);
+        g_string_append_printf(lines[part], "frame=%" PRIu64 " end_us=%" PRId64
+                               " interval_us=%" PRId64 " part=%d/%d",
+                               frame, now_us, interval_us, part + 1, LINE_COUNT);
+    }
     previous_flip_us = now_us;
     g_mutex_lock(&stall_profile_lock);
     for (int i = 0; i < NV2A_STALL_PHASE_COUNT; i++) {
-        g_string_append_printf(line, " %s=%" PRIu64 "/%" PRIu64
+        g_string_append_printf(lines[i / PHASES_PER_LINE], " %s=%" PRIu64 "/%" PRIu64
                                "/%" PRIu64 "/%" PRIu64,
                                stall_phase_names[i], stall_phases[i].count,
                                stall_phases[i].us, stall_phases[i].max_us,
@@ -106,8 +118,10 @@ void nv2a_stall_frame(int64_t now_us)
     }
     memset(stall_phases, 0, sizeof(stall_phases));
     g_mutex_unlock(&stall_profile_lock);
-    __android_log_print(ANDROID_LOG_INFO, "xemu-stall", "%s", line->str);
-    g_string_free(line, true);
+    for (int part = 0; part < LINE_COUNT; part++) {
+        __android_log_print(ANDROID_LOG_INFO, "xemu-stall", "%s", lines[part]->str);
+        g_string_free(lines[part], true);
+    }
 }
 #endif
 

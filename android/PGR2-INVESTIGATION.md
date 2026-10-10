@@ -932,3 +932,31 @@ and EEPROM checksums match, EEPROM ownership and all nine originally empty
 properties are restored, debugger forwarding is absent and the emulator is
 stopped. Independent verification completes before the agreed deadline and
 the phone is released. Raw captures and game data remain private.
+
+## Isolating compiler stages and readback callers (perf18)
+
+The next diagnostic splits shader compilation into preprocessing, parsing,
+linking and SPIR-V generation. It distinguishes the five surface-readback
+finish families (deferred completion, direct buffer download, pending
+downloads, dirty downloads and incompatible-binding eviction), and times the
+texture-range parent and CPU-access wait. Required submissions, fences,
+downloads, compiler options and shader output stay on their existing paths.
+All timing remains opt-in through `debug.xemu.vk.stall_profile=1` and is not
+an FPS benchmark or an optimization.
+
+The 43 phase categories are emitted in two bounded log parts per guest flip.
+Each part carries the same frame number, end time and interval; both use one
+locked counter snapshot. The private parser joins complete matching parts
+and rejects missing, duplicate, truncated, mismatched or mixed-schema parts.
+It retains support for the earlier complete 15-, 31- and 32-category logs.
+Seventeen offline checks pass. Compiler/readback phases overlap their parent
+regions and different threads; they must not be added as GPU time. No guest
+addresses, instructions, shaders or texture content are added to these logs.
+
+The Android glslang build already disables SPIRV-Tools optimization. Its
+[pinned upstream translation path](https://github.com/KhronosGroup/glslang/blob/b5782e52ee2f7b3e40bb9c80d15b47016e008bc9/SPIRV/GlslangToSpv.cpp#L10816)
+also limits that optimizer to HLSL legalization or size optimization. Merely
+turning off an optimizer is not a substantiated fix for the captured GLSL
+compilation stall. This build measures the active stages before choosing a
+compiler change. CI, artifact checks and fresh device availability are
+pending. Perf17's presentation-reuse mode remains off.

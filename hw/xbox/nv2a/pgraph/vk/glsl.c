@@ -213,7 +213,10 @@ static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
 
     glslang_shader_t *shader = glslang_shader_create(&input);
 
-    if (!glslang_shader_preprocess(shader, &input)) {
+    int64_t preprocess_start = nv2a_stall_start();
+    bool preprocessed = glslang_shader_preprocess(shader, &input);
+    nv2a_stall_record(NV2A_STALL_SHADER_PREPROCESS, preprocess_start, 0);
+    if (!preprocessed) {
         dump_glsl_failure("preprocessing",
                           glslang_shader_get_info_log(shader),
                           glslang_shader_get_info_debug_log(shader),
@@ -222,7 +225,10 @@ static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
         return NULL;
     }
 
-    if (!glslang_shader_parse(shader, &input)) {
+    int64_t parse_start = nv2a_stall_start();
+    bool parsed = glslang_shader_parse(shader, &input);
+    nv2a_stall_record(NV2A_STALL_SHADER_PARSE, parse_start, 0);
+    if (!parsed) {
         dump_glsl_failure("parsing",
                           glslang_shader_get_info_log(shader),
                           glslang_shader_get_info_debug_log(shader),
@@ -234,8 +240,11 @@ static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
     glslang_program_t *program = glslang_program_create();
     glslang_program_add_shader(program, shader);
 
-    if (!glslang_program_link(program, GLSLANG_MSG_SPV_RULES_BIT |
-                                           GLSLANG_MSG_VULKAN_RULES_BIT)) {
+    int64_t link_start = nv2a_stall_start();
+    bool linked = glslang_program_link(program, GLSLANG_MSG_SPV_RULES_BIT |
+                                               GLSLANG_MSG_VULKAN_RULES_BIT);
+    nv2a_stall_record(NV2A_STALL_SHADER_LINK, link_start, 0);
+    if (!linked) {
         dump_glsl_failure("linking",
                           glslang_program_get_info_log(program),
                           glslang_program_get_info_debug_log(program),
@@ -263,7 +272,10 @@ static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
         glslang_program_add_source_text(program, input.stage, input.code,
                                         strlen(input.code));
     }
+    int64_t spirv_start = nv2a_stall_start();
     glslang_program_SPIRV_generate_with_options(program, stage, &spv_options);
+    nv2a_stall_record(NV2A_STALL_SHADER_SPIRV, spirv_start,
+                     glslang_program_SPIRV_get_size(program) * sizeof(uint32_t));
 
     const char *spirv_messages = glslang_program_SPIRV_get_messages(program);
     if (spirv_messages) {
