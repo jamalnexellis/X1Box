@@ -1289,6 +1289,12 @@ add_executable(test-cubemap-copy-policy EXCLUDE_FROM_ALL
 target_include_directories(test-cubemap-copy-policy PRIVATE "${REPO_ROOT}")
 target_compile_options(test-cubemap-copy-policy PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(test-surface-copy-policy EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-surface-copy-policy.c"
+)
+target_include_directories(test-surface-copy-policy PRIVATE "${REPO_ROOT}")
+target_compile_options(test-surface-copy-policy PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(test-cubemap-copy-vk EXCLUDE_FROM_ALL
   "${REPO_ROOT}/android/test/cpp/test-cubemap-copy-vk.c"
 )

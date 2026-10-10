@@ -1218,3 +1218,58 @@ three-slot movement trace measures the fence wait if sufficient restoration
 time remains. All benchmark/trace images require review, alongside AI traffic,
 cache and thermal limits. Defaults remain unchanged and fresh availability is
 required; increased queue depth is a hypothesis, not an accepted improvement.
+
+The fresh six-minute comparison completes all four profile-off captures in
+the same perf21 APK, ordered 2/3/3/2, with cube copy enabled throughout. Each
+25-second capture supplies three full five-second intervals after warmup.
+Two-slot runs give 14.584 and 14.809 FPS; three-slot runs give 13.474 and
+13.364 FPS. Pooled flips/time are 444/30,211 ms = 14.697 FPS versus
+405/30,180 ms = 13.419 FPS: three slots are 8.690% slower. Within-mode
+run ranges are 1.530% and 0.819%, respectively. This is a rejection of the
+three-slot change in this scene, not a claim about every game. Runtime slot
+counts, actual cube-copy engagement, neutral stationary controls and matching
+car/camera/road are checked. All eleven benchmark/trace images are reviewed;
+movement reaches 68 km/h with coherent new scenery and released input.
+Thermal status is zero throughout, but that does not establish fixed clocks;
+AI traffic, cache history and short sample duration remain limits. Current
+archive/HDD/EEPROM, ownership and all ten original properties are independently
+verified after app-UID restoration, with emulator stopped and phone released
+more than a minute before the original deadline. No default is changed.
+
+The profile-on three-slot trace has 211 initial complete flips (median
+72.894 ms, p95 83.260 ms, maximum 163.162 ms) and 280 moving flips (median
+71.329 ms, p95 96.037 ms, maximum 133.746 ms). Slot preparation is almost
+gone: `finish_wait` averages 0.005 and 0.075 ms per flip. Instead,
+`tex_reuse_wait` averages 30.398 and 30.816 ms, containing `flush_wait`
+at 30.356 and 30.785 ms. These are overlapping host scopes, not additive
+GPU execution times. Readback routes and shader compilation stay zero;
+movement pipeline creation peaks at 36.053 ms. Increasing queue depth moves
+the blocking point into texture reuse and fails the measured FPS comparison.
+
+## Ordering compatible 2D surface refreshes on the GPU (perf22)
+
+The cached 2D surface-copy branch waits for all submissions before refreshing
+an image, even though the allocation and descriptors remain stable. Perf22
+adds an Android opt-in `debug.xemu.vk.surf_copy_queue=1` candidate that records
+an in-place refresh with explicit same-queue prior-reader/write barriers,
+restores the source layout and makes the destination shader-readable. Prior
+queued draws are recorded first. This uses the synchronization scopes defined
+by the [Vulkan synchronization specification](https://docs.vulkan.org/spec/latest/chapters/synchronization.html),
+not submission order alone. The candidate accepts only active initialized
+color surfaces, exact native RGB565/RGBA8/BGRA8 formats, identical dimensions,
+one mip/layer, 2D depth-one textures, 1x scale, no border/cubemap, distinct
+images and no pending upload/download. Depth/format/geometry mismatches,
+direct descriptors, CPU uploads and retirement retain their existing paths.
+Eligibility is rechecked after prior draw emission; losing eligibility restores
+the ordinary wait before fallback. Default is off and submission depth remains
+two. Bounded shape-only slow-wait logs distinguish remaining color/depth/CPU
+routes without exposing memory addresses or texture contents.
+
+The shared production barrier helper is covered by generated exact-pixel
+fixtures for three queued versions of the same 2D destination, with prior
+transfer reads and no host wait between submissions. RGB565, RGBA8 and BGRA8
+are exercised at 16x16 and 640x480, alongside existing six-face cube tests.
+A separate policy fixture rejects incompatible states. Software-driver
+synchronization validation, Android compilation, artifact inspection and
+actual Adreno/game/FPS checks are pending; transfer-read fixtures do not
+constitute complete shader-reader or game compatibility validation.

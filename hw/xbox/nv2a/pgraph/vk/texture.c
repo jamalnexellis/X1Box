@@ -31,6 +31,8 @@
 #include "renderer.h"
 #include "texture-upload.h"
 #include "cubemap-copy-vk.h"
+#include "surface-copy.h"
+#include "surface-copy-vk.h"
 #include "qemu/timer.h"
 
 #ifdef __ANDROID__
@@ -1639,8 +1641,94 @@ static void bind_zeta_surface_as_texture(PGRAPHState *pg,
     texture->draw_time = surface->draw_time;
 }
 
+static bool surface_queue_copy_enabled(void)
+{
+#ifdef __ANDROID__
+    static int enabled = -1;
+    if (enabled < 0) {
+        char prop[PROP_VALUE_MAX] = {};
+        enabled = __system_property_get("debug.xemu.vk.surf_copy_queue", prop) > 0 &&
+                  prop[0] == '1';
+        __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                            "surface queued-copy experiment=%d", enabled);
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
+                                    const TextureBinding *t)
+{
+#if OPT_SURF_TO_TEX_INLINE
+    if (!surface_queue_copy_enabled()) {
+        return false;
+    }
+    PGRAPHVkState *r = pg->vk_renderer_state;
+    const TextureShape *shape = &t->key.state;
+    VkFormat format = t->image_config.format;
+    bool native = format == VK_FORMAT_R5G6B5_UNORM_PACK16 ||
+                  format == VK_FORMAT_R8G8B8A8_UNORM ||
+                  format == VK_FORMAT_B8G8R8A8_UNORM;
+    VkSurfaceCopyPolicy policy = {
+        .width = shape->width, .height = shape->height, .depth = shape->depth,
+        .dimensions = shape->dimensionality, .levels = shape->levels,
+        .layers = t->image_config.array_layers, .scale = pg->surface_scale_factor,
+        .source_width = s->width, .source_height = s->height,
+        .cubemap = shape->cubemap, .border = shape->border, .color = s->color,
+        .active = s->access_cb != NULL,
+        .initialized = s->initialized && s->image_layout != VK_IMAGE_LAYOUT_UNDEFINED,
+        .upload_pending = s->upload_pending, .download_pending = s->download_pending,
+        .exact_native_format = native && s->host_fmt.aspect == VK_IMAGE_ASPECT_COLOR_BIT &&
+            format == s->host_fmt.vk_format &&
+            format == r->texture_format_map[shape->color_format].vk_format &&
+            t->image_config.image_type == VK_IMAGE_TYPE_2D &&
+            (t->image_config.usage & (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) ==
+                (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT) &&
+            t->image_config.width == shape->width &&
+            t->image_config.height == shape->height && t->image_config.depth == 1 &&
+            t->image_config.mip_levels == 1,
+        .distinct_images = s->image && t->image && s->image != t->image,
+    };
+    return vk_surface_copy_eligible(&policy) &&
+        (t->current_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ||
+         t->current_layout == VK_IMAGE_LAYOUT_UNDEFINED);
+#else
+    (void)pg; (void)s; (void)t;
+    return false;
+#endif
+}
+
+static void wait_texture_reuse(PGRAPHState *pg, TextureBinding *texture,
+                               SurfaceBinding *surface)
+{
+    int64_t start = nv2a_stall_start();
+    pgraph_vk_flush_all_frames(pg);
+    nv2a_stall_record(NV2A_STALL_TEXTURE_REUSE_WAIT, start, 0);
+#ifdef __ANDROID__
+    static unsigned detail_count;
+    if (start && detail_count < 24) {
+        int64_t elapsed = qemu_clock_get_us(QEMU_CLOCK_REALTIME) - start;
+        if (elapsed >= 2000) {
+            detail_count++;
+            __android_log_print(ANDROID_LOG_INFO, "xemu-stall-detail",
+                "texture_reuse_wait route=%s width=%u height=%u levels=%u "
+                "source_fmt=%d destination_fmt=%d us=%" PRId64,
+                surface ? (surface->color ? "color" : "depth") : "cpu",
+                texture->key.state.width, texture->key.state.height,
+                texture->key.state.levels,
+                surface ? surface->host_fmt.vk_format : VK_FORMAT_UNDEFINED,
+                texture->image_config.format, elapsed);
+        }
+    }
+#else
+    (void)texture; (void)surface;
+#endif
+}
+
 static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
-                                    TextureBinding *texture)
+                                    TextureBinding *texture, bool queue_copy)
 {
     if (!surface->color) {
         copy_zeta_surface_to_texture(pg, surface, texture);
@@ -1656,6 +1744,36 @@ static void copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
     if (r->draw_queue.count > 0) {
         NV2AState *d = container_of(pg, NV2AState, pgraph);
         pgraph_vk_flush_draw_queue(d);
+    }
+    bool eligible = queue_copy && can_queue_surface_copy(pg, surface, texture);
+    if (queue_copy && !eligible &&
+        texture->submit_time + r->num_active_frames > r->submit_count) {
+        /* Prior draw emission can change surface state. If the strict policy
+         * stops matching, restore the ordinary wait before the fallback. */
+        wait_texture_reuse(pg, texture, surface);
+    }
+    if (eligible) {
+        /* Prior users are now recorded. Preserve stable allocations and views:
+         * the queue barriers order their reads before this in-place write. */
+        int64_t start = nv2a_stall_start();
+        OPT_STAT_INC(nd_copysurf);
+        VkCommandBuffer cmd = pgraph_vk_begin_nondraw_commands(pg);
+        vk_surface_copy_record(cmd, surface->image, surface->image_layout,
+            texture->image, texture->current_layout, surface->width, surface->height);
+        pgraph_vk_end_nondraw_commands(pg, cmd);
+        texture->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        texture->draw_time = surface->draw_time;
+        nv2a_profile_inc_counter(NV2A_PROF_SURF_TO_TEX);
+        nv2a_stall_record(NV2A_STALL_TEXTURE_RECORD, start, 0);
+#ifdef __ANDROID__
+        static bool engaged;
+        if (!engaged) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                                "surface queued-copy path engaged: native color 2D");
+            engaged = true;
+        }
+#endif
+        return;
     }
     TextureShape *state = &texture->key.state;
     VkColorFormatInfo vkf = r->texture_format_map[state->color_format];
@@ -2460,12 +2578,23 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
             copy_cube_surfaces_to_texture(pg, cube_sources, snode);
         } else if (surface_to_texture) {
             if (surface->draw_time != snode->draw_time) {
-                if (snode->submit_time + r->num_active_frames > r->submit_count) {
-                    int64_t wait_start = nv2a_stall_start();
-                    pgraph_vk_flush_all_frames(pg);
-                    nv2a_stall_record(NV2A_STALL_TEXTURE_REUSE_WAIT, wait_start, 0);
-                }
                 bool can_direct_bind = can_bind_surface_direct(r, surface);
+                bool queue_copy = !can_direct_bind &&
+                                  can_queue_surface_copy(pg, surface, snode);
+                if (!queue_copy &&
+                    snode->submit_time + r->num_active_frames > r->submit_count) {
+                    wait_texture_reuse(pg, snode, surface);
+                }
+
+#ifdef __ANDROID__
+                static bool bypass_logged;
+                if (queue_copy && !bypass_logged &&
+                    snode->submit_time + r->num_active_frames > r->submit_count) {
+                    __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                        "surface queued-copy bypassed host texture reuse wait");
+                    bypass_logged = true;
+                }
+#endif
 
                 if (can_direct_bind) {
                     VkImageLayout direct_layout;
@@ -2504,7 +2633,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
                     }
 #endif
                 } else {
-                    copy_surface_to_texture(pg, surface, snode);
+                    copy_surface_to_texture(pg, surface, snode, queue_copy);
                 }
                 did_s2t_copy = true;
             } else if (can_bind_surface_direct(r, surface)) {
@@ -2517,9 +2646,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
             if (was_surface_copy ||
                 (possibly_dirty && content_hash != snode->hash)) {
                 if (snode->submit_time + r->num_active_frames > r->submit_count) {
-                    int64_t wait_start = nv2a_stall_start();
-                    pgraph_vk_flush_all_frames(pg);
-                    nv2a_stall_record(NV2A_STALL_TEXTURE_REUSE_WAIT, wait_start, 0);
+                    wait_texture_reuse(pg, snode, NULL);
                 }
                 upload_texture_image(pg, texture_idx, snode);
                 snode->hash = content_hash;
@@ -2897,7 +3024,8 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
             }
 #endif
         } else {
-            copy_surface_to_texture(pg, surface, snode);
+            copy_surface_to_texture(pg, surface, snode,
+                                    can_queue_surface_copy(pg, surface, snode));
         }
     } else {
         upload_texture_image(pg, texture_idx, snode);

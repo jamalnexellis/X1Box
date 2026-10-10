@@ -1,4 +1,4 @@
-name: Android cubemap fixture binaries
+name: Android GPU copy fixture binaries
 on:
   push:
     branches: [codex/pgr2-startup-fix]
@@ -18,8 +18,9 @@ jobs:
           test -n "$task_clang"
           mkdir -p native-tests
           "$task_clang" -std=c11 -Wall -Wextra -Werror -UNDEBUG -I. android/test/cpp/test-cubemap-copy-policy.c -o native-tests/test-cubemap-copy-policy
+          "$task_clang" -std=c11 -Wall -Wextra -Werror -UNDEBUG -I. android/test/cpp/test-surface-copy-policy.c -o native-tests/test-surface-copy-policy
           "$task_clang" -std=c11 -Wall -Wextra -Werror -UNDEBUG -I. android/test/cpp/test-cubemap-copy-vk.c -lvulkan -o native-tests/test-cubemap-copy-vk
-          sha256sum native-tests/test-cubemap-copy-policy native-tests/test-cubemap-copy-vk > native-tests/SHA256SUMS.txt
+          sha256sum native-tests/test-cubemap-copy-policy native-tests/test-surface-copy-policy native-tests/test-cubemap-copy-vk > native-tests/SHA256SUMS.txt
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: android-cubemap-fixtures-${{ github.sha }}

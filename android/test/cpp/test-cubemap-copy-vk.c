@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "hw/xbox/nv2a/pgraph/vk/cubemap-copy-vk.h"
+#include "hw/xbox/nv2a/pgraph/vk/surface-copy-vk.h"
 
 #define CHECK(call) do { VkResult result_ = (call); \
     if (result_ != VK_SUCCESS) { \
@@ -61,13 +62,14 @@ static VkDeviceMemory make_buffer(VkDeviceSize size, VkBuffer *buffer)
     return memory;
 }
 
-static VkDeviceMemory make_image(uint32_t width, uint32_t layers, VkImage *image)
+static VkDeviceMemory make_image(uint32_t width, uint32_t height,
+                                uint32_t layers, VkFormat format, VkImage *image)
 {
     VkImageCreateInfo info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_R5G6B5_UNORM_PACK16,
+        .imageType = VK_IMAGE_TYPE_2D, .format = format,
         .flags = layers == 6 ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0,
-        .extent = { width, width, 1 }, .mipLevels = 1, .arrayLayers = layers,
+        .extent = { width, height, 1 }, .mipLevels = 1, .arrayLayers = layers,
         .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
         .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
@@ -128,9 +130,10 @@ static void test_cube(VkQueue queue, VkCommandPool pool, uint32_t width)
     };
     VkDeviceMemory source_memory[6], cube_memory;
     for (unsigned i = 0; i < 6; i++) {
-        source_memory[i] = make_image(width, 1, &sources[i]);
+        source_memory[i] = make_image(width, width, 1, VK_FORMAT_R5G6B5_UNORM_PACK16,
+                                      &sources[i]);
     }
-    cube_memory = make_image(width, 6, &cube);
+    cube_memory = make_image(width, width, 6, VK_FORMAT_R5G6B5_UNORM_PACK16, &cube);
     VkCommandBufferAllocateInfo alloc = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
@@ -229,6 +232,94 @@ static void test_cube(VkQueue queue, VkCommandPool pool, uint32_t width)
     printf("PASS RGB565 %ux%u six faces, queued replacement of face five\n", width, width);
 }
 
+static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
+                         uint32_t height, VkFormat format, unsigned bytes_per_pixel)
+{
+    const unsigned passes = 3;
+    size_t bytes = (size_t)width * height * bytes_per_pixel;
+    VkBuffer input, output;
+    VkDeviceMemory input_memory = make_buffer(bytes * passes, &input);
+    VkDeviceMemory output_memory = make_buffer(bytes * passes, &output);
+    unsigned char *input_data, *output_data;
+    CHECK(vkMapMemory(device, input_memory, 0, VK_WHOLE_SIZE, 0, (void **)&input_data));
+    CHECK(vkMapMemory(device, output_memory, 0, VK_WHOLE_SIZE, 0, (void **)&output_data));
+    for (size_t i = 0; i < bytes * passes; i++) {
+        input_data[i] = (unsigned char)(i * 73 + (i >> 8) * 19 + (i / bytes) * 41);
+    }
+    memset(output_data, 0xa5, bytes * passes);
+    VkImage source, destination;
+    VkDeviceMemory source_memory = make_image(width, height, 1, format, &source);
+    VkDeviceMemory destination_memory = make_image(width, height, 1, format, &destination);
+    VkCommandBufferAllocateInfo alloc = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = passes,
+    };
+    VkCommandBuffer cmds[3];
+    CHECK(vkAllocateCommandBuffers(device, &alloc, cmds));
+    VkImageLayout layouts[3] = { VK_IMAGE_LAYOUT_GENERAL,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    for (unsigned pass = 0; pass < passes; pass++) {
+        VkCommandBuffer cmd = cmds[pass];
+        VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        CHECK(vkBeginCommandBuffer(cmd, &begin));
+        VkBufferMemoryBarrier host = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_HOST_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = input, .offset = bytes * pass, .size = bytes,
+        };
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, NULL, 1, &host, 0, NULL);
+        transition(cmd, source, 1, pass ? layouts[pass - 1] : VK_IMAGE_LAYOUT_UNDEFINED,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkBufferImageCopy region = {
+            .bufferOffset = bytes * pass,
+            .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+            .imageExtent = { width, height, 1 },
+        };
+        vkCmdCopyBufferToImage(cmd, input, source, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        transition(cmd, source, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layouts[pass]);
+        vk_surface_copy_record(cmd, source, layouts[pass], destination,
+            pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+            width, height);
+        transition(cmd, destination, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        vkCmdCopyImageToBuffer(cmd, destination, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                              output, 1, &region);
+        transition(cmd, destination, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        VkBufferMemoryBarrier readback = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = output, .offset = bytes * pass, .size = bytes,
+        };
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+            0, 0, NULL, 1, &readback, 0, NULL);
+        CHECK(vkEndCommandBuffer(cmd));
+    }
+    /* Enqueue all versions without a host wait between them. Previous reads
+     * must preserve their version when the same destination is refreshed. */
+    for (unsigned pass = 0; pass < passes; pass++) {
+        VkSubmitInfo submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1, .pCommandBuffers = &cmds[pass] };
+        CHECK(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE));
+    }
+    CHECK(vkQueueWaitIdle(queue));
+    assert(memcmp(output_data, input_data, bytes * passes) == 0);
+    vkFreeCommandBuffers(device, pool, passes, cmds);
+    vkDestroyImage(device, source, NULL); vkDestroyImage(device, destination, NULL);
+    vkFreeMemory(device, source_memory, NULL); vkFreeMemory(device, destination_memory, NULL);
+    vkUnmapMemory(device, input_memory); vkUnmapMemory(device, output_memory);
+    vkDestroyBuffer(device, input, NULL); vkDestroyBuffer(device, output, NULL);
+    vkFreeMemory(device, input_memory, NULL); vkFreeMemory(device, output_memory, NULL);
+    printf("PASS native color 2D fmt=%d %ux%u, three queued versions and prior reads\n",
+           format, width, height);
+}
+
 int main(void)
 {
     bool validate = getenv("XEMU_TEST_VALIDATE") != NULL;
@@ -307,6 +398,13 @@ int main(void)
     CHECK(vkCreateCommandPool(device, &pool_info, NULL, &pool));
     test_cube(queue, pool, 16);
     test_cube(queue, pool, 256);
+    VkFormat formats[] = { VK_FORMAT_R5G6B5_UNORM_PACK16,
+        VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM };
+    for (unsigned i = 0; i < 3; i++) {
+        unsigned bytes = i ? 4 : 2;
+        test_surface(queue, pool, 16, 16, formats[i], bytes);
+        test_surface(queue, pool, 640, 480, formats[i], bytes);
+    }
     vkDestroyCommandPool(device, pool, NULL);
     vkDestroyDevice(device, NULL);
     if (messenger) {
@@ -314,6 +412,6 @@ int main(void)
     }
     vkDestroyInstance(instance, NULL);
     assert(validation_errors == 0);
-    puts("Production cubemap copy pixel and synchronization fixture passed");
+    puts("Production cubemap and 2D surface copy pixel and synchronization fixture passed");
     return 0;
 }
