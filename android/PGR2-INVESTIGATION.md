@@ -325,7 +325,7 @@ texture uploads, native ThinLTO and disabled rendering profiling overhead.
 Private phone backups, firmware, game images, logs and screenshots are not
 included in the repository or CI artifacts.
 
-## Latest delivered binary
+## Validated configuration-guard binary
 
 `perf8` source commit: `94cd6ecdeff656946b29e12bdf205ed027d29a82`.
 [Successful APK build](https://github.com/jamalnexellis/X1Box/actions/runs/38011029972).
@@ -355,3 +355,60 @@ is preserved outside the active snapshot directory; its benchmark HDD remains
 in a private backup. Diagnostic properties, debug logging and USB stay-awake
 settings are restored. The user's original game image and firmware/HDD files
 remain untouched.
+
+## Android guest instruction profiling
+
+Perf9 adds opt-in Android perf-map and JIT-dump output in private app storage.
+Profiling is disabled in normal gameplay. This supplies generated-code address
+ranges for CPU samples that the ordinary call graph cannot attribute reliably.
+It is diagnostic instrumentation, with no claimed FPS improvement.
+
+A verified 20-second foreground race capture records 217,639 CPU-cycle samples
+with none lost. The emulated CPU thread accounts for 57.50% of sampled CPU
+cycles and the graphics FIFO thread for 25.24%. These are CPU work shares,
+not GPU utilization or proof of the frame's critical path. The car remains
+stationary, controller binding and configuration checks pass, and the activity
+does not pause during this capture. Two earlier attempts that leave the game
+foreground are excluded.
+
+Within the CPU thread, flat sample attribution places 54.04% of cycles in native
+functions, 45.90% in translated guest code and 0.06% in unmapped ranges. This is
+a different attribution method from the earlier call-graph profile; the changed
+percentages do not establish a performance gain. A guest memory-polling loop
+accounts for approximately 19.98% of this thread's sampled cycles. Its wait
+target is not established, so it must not be described as a proven GPU or audio
+bottleneck. Native block execution and dispatch also consume substantial work.
+
+JIT dumps record generated blocks before subsequent jump patching. Branch
+immediates in the saved bytes alone cannot establish the executed block's
+current chaining state. Dumps, game code, sample addresses and device logs
+remain private and are not included in the repository or build artifacts.
+
+## Latest CPU allocation binary: validation pending
+
+Perf10 returns ARM64 registers X26 and X27 to the TCG allocator when the
+optional Xbox RAM shortcut has no configured mapping. In this base,
+`xbox_ram_size` remains zero, but the old backend reserves both registers
+regardless. Normal soft-MMU translation can now use these callee-saved registers.
+The ABI save/restore behavior is unchanged. A configured RAM shortcut retains
+its reservations, and shortcut emission also checks that they exist.
+
+The diagnostic property `debug.xemu.tcg.reclaim_regs=0` selects the earlier
+allocation for same-APK comparisons; the default enables the change. This
+does not enable the inactive RAM shortcut, remove MMU checks, change floating
+point precision, or reduce rendering quality. The benefit requires a controlled
+device comparison and is not yet quantified.
+
+`perf10` source commit: `dec0e79ec477b77003e65b1cb2c43f8d48f96902`.
+[Successful APK build and CI checks](https://github.com/jamalnexellis/X1Box/actions/runs/38013731634).
+APK version: `1.2.9-pgr2-perf10`, version code 39.
+APK SHA-256: `501b7b6386b098ee7202bd507b0add2a62334f4c51be73f88fb4c8d904b61a13`.
+The build artifact and delivered APK checksums match. Updating the development
+package succeeds without uninstalling it. Startup, touch input and an FPS
+comparison on this binary remain pending after the phone disconnects from USB.
+Wireless ADB pairing is being arranged for further tests.
+
+The pre-CPU-test private HDD, snapshots, shader caches, preferences and EEPROM
+are backed up. Restoration of this latest test session remains pending until
+the phone reconnects; the earlier perf8 restoration described above is complete.
+The user's original game image and firmware/HDD files remain untouched.
