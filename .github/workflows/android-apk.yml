@@ -141,6 +141,8 @@ jobs:
             android/app/build/outputs/native-tests/test-xiso-media
             android/app/build/outputs/native-tests/test-uniform-copy
             android/app/build/outputs/native-tests/test-texture-upload
+            android/app/build/outputs/native-tests/test-cubemap-copy-policy
+            android/app/build/outputs/native-tests/test-cubemap-copy-vk
             android/app/build/outputs/native-tests/texture-upload.spv
             android/app/build/outputs/native-tests/texture-upload-r16.spv
             android/app/build/outputs/native-tests/texture-sample.spv

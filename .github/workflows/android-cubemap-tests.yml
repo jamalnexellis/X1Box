@@ -1,0 +1,27 @@
+name: Android cubemap fixture binaries
+on:
+  push:
+    branches: [codex/pgr2-startup-fix]
+    paths: [.github/workflows/android-cubemap-tests.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fixtures:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      - name: Compile standalone Android driver fixtures
+        run: |
+          task_clang=$(find "$ANDROID_HOME/ndk" -path '*/bin/aarch64-linux-android29-clang' -print -quit)
+          test -n "$task_clang"
+          mkdir -p native-tests
+          "$task_clang" -std=c11 -Wall -Wextra -Werror -UNDEBUG -I. android/test/cpp/test-cubemap-copy-policy.c -o native-tests/test-cubemap-copy-policy
+          "$task_clang" -std=c11 -Wall -Wextra -Werror -UNDEBUG -I. android/test/cpp/test-cubemap-copy-vk.c -lvulkan -o native-tests/test-cubemap-copy-vk
+          sha256sum native-tests/test-cubemap-copy-policy native-tests/test-cubemap-copy-vk > native-tests/SHA256SUMS.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: android-cubemap-fixtures-${{ github.sha }}
+          path: native-tests/
+          compression-level: 0
