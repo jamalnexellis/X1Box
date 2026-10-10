@@ -715,6 +715,7 @@ static bool CopyUriToPath(JNIEnv* env, jobject activity, const std::string& uriS
 }
 
 struct SetupFiles {
+  bool config_written = false;
   std::string mcpx;
   std::string flash;
   std::string hdd;
@@ -860,7 +861,16 @@ static bool WriteConfigToml(const std::string& config_path,
     return false;
   }
   out << tbl;
+  out.flush();
+  if (!out) {
+    LogErrorFmt("Failed to flush config at %s", config_path.c_str());
+    return false;
+  }
   out.close();
+  if (!out) {
+    LogErrorFmt("Failed to close config at %s", config_path.c_str());
+    return false;
+  }
   return true;
 }
 
@@ -889,7 +899,10 @@ static SetupFiles SyncSetupFiles() {
   LogInfoFmt("SyncSetupFiles: base path %s", basePath);
 
   std::string base = std::string(basePath) + "/x1box";
-  EnsureDirExists(base);
+  if (!EnsureDirExists(base)) {
+    LogErrorFmt("Failed to create working directory %s", base.c_str());
+    return out;
+  }
   out.eeprom = base + "/eeprom.bin";
   out.inline_aio_flag_path = base + "/inline_aio_required.flag";
   out.session_marker_path = base + "/session.marker";
@@ -1176,7 +1189,11 @@ static SetupFiles SyncSetupFiles() {
     if (!arPref.empty()) ds.aspect_ratio = arPref;
   }
 
-  WriteConfigToml(out.config_path, out.mcpx, out.flash, out.hdd, out.dvd, out.eeprom, tbSize, ds);
+  out.config_written = WriteConfigToml(out.config_path, out.mcpx, out.flash,
+                                      out.hdd, out.dvd, out.eeprom, tbSize, ds);
+  if (!out.config_written) {
+    return out;
+  }
   LogInfoFmt("SyncSetupFiles: config %s", out.config_path.c_str());
   LogInfoFmt("Resolved mcpx=%s", out.mcpx.c_str());
   LogInfoFmt("Resolved flash=%s", out.flash.c_str());
@@ -1483,6 +1500,18 @@ extern "C" int SDL_main(int argc, char* argv[]) {
   __android_log_print(ANDROID_LOG_INFO, "xemu-android",
                       "SyncSetupFiles took %llu ms",
                       (unsigned long long)(t_sync_end - t_sync_start));
+
+  // Loading defaults after a failed write changes hardware and FP settings.
+  // A later snapshot restore can then fail after partially changing the VM.
+  if (!setup.config_written) {
+    LogError("Startup aborted: emulator settings could not be saved");
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                             "Unable to save emulator settings",
+                             "X1 BOX cannot save its settings. Check free storage "
+                             "and access to the app's files, then try again.",
+                             nullptr);
+    return 1;
+  }
 
   // Apply user's audio driver preference (overrides the default set above)
   if (!setup.audio_driver.empty()) {
