@@ -1199,8 +1199,8 @@ p95 76.432 ms, maximum 91.299 ms) and 301 moving flips (median 66.935 ms,
 p95 91.198 ms, maximum 124.897 ms). All readback routes and shader compilation
 remain zero. Pipeline creation peaks at 27.367 ms during movement.
 `finish_wait` averages 25.380 ms per initial flip and 25.779 ms moving.
-Fully contained same-thread slow fence intervals cover 99.258% of 220 logged
-slow preparation parents initially, and 99.179% of the time in 281 such
+Fully contained same-thread slow fence intervals cover 99.258% of the time
+in 220 logged slow preparation parents initially, and 99.179% in 281 such
 parents moving (279 have a logged child). The slow-event subset is bounded
 by the shared quota and two-millisecond threshold. This attributes almost all
 of the examined long preparation waits to waiting for submitted GPU work;
