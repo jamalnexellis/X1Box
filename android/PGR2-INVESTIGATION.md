@@ -872,6 +872,29 @@ paths. Profiling counts retained presentations in `display_reuse`.
 The standalone production-policy fixture covers changes to every key field,
 pending uploads, video, capture, failed presents, cache invalidation, clock
 rollback and the fixed refresh deadline. It does not exercise a Vulkan
-swapchain or prove that every image mutation is tracked. CI, artifact checks
-and device correctness/performance validation are pending; the candidate
-remains disabled by default.
+swapchain or prove that every image mutation is tracked.
+
+Source `0040c0fdb98405ad439dabf24f493b59d7a01221` builds successfully in
+[CI run 38066380552](https://github.com/jamalnexellis/X1Box/actions/runs/38066380552).
+Version `1.2.9-pgr2-perf17` (46) has APK SHA-256
+`4a5188b14eebe40dececf06abea2852641c8b217adda4579daff033e94719d0f`.
+The presentation-policy, submission-handshake, XISO and uniform fixtures pass
+with ASan/UBSan on the CI host; Android native fixtures and texture shaders
+compile. The downloaded artifact matches CI's checksum, retains perf16's
+signer certificate identity and contains the presentation-reuse property,
+startup log and profiler category. The version name is present in the APK
+manifest. These checks do not verify the APK payload's signature
+cryptographically or establish a device performance improvement.
+
+The private analyzer passes eleven offline checks for the complete 15-, 31-
+and 32-phase schemas, partial/mixed-schema rejection, frame continuity,
+marker boundaries and event timestamps. The 32-category frame payload fits
+the Android log limit with maximum-width counters. A fresh five-minute
+capture is prepared: moving scenery with profiling enabled checks candidate
+correctness and retained-presentation counts; separate same-APK stationary
+captures with profiling disabled compare FPS if time permits. Two short
+captures alone cannot establish repeatability or new-content gains. The
+then-current app-owned state and all nine properties will be preserved and
+restored. The previous phone window has ended. Fresh availability and device
+correctness/performance validation remain pending; the candidate stays off
+by default.
