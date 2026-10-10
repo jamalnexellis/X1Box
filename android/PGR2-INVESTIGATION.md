@@ -356,26 +356,6 @@ in a private backup. Diagnostic properties, debug logging and USB stay-awake
 settings are restored. The user's original game image and firmware/HDD files
 remain untouched.
 
-## Further opt-in translation candidate (perf13)
-
-The ARM64 [xemu-macos optimization ledger](https://github.com/MichaelJSr/xemu-macos/blob/macos-optimizations/docs/optimizations.md)
-describes removing per-block `can_do_io` stores when instruction counting and
-record/replay are disabled. Its performance reports concern another game and
-host and are not results for this fork or phone. The local translator emits
-these stores even into the profiled memory-poll block. MMIO encountered before
-the last instruction then takes a state-restore/recompile/re-execution path
-that exists for deterministic I/O scheduling.
-
-Perf13 adapts this candidate as `debug.xemu.tcg.elide_candoio=1`, off by default.
-The decision is latched before the first translated block and forced off with
-instruction counting or record/replay. Plugin, single-step, breakpoint-page,
-instruction-counted and memory-only replay blocks retain the existing stores.
-The normal CPU initialization, TB return and exception-exit paths keep the
-flag true. The MMU, MMIO callbacks, `mem_io_pc`, interrupt checks, exit-request
-checks, memory barriers and floating-point behavior are unchanged.
-Compilation, device compatibility, emitted-code checks and same-APK performance
-validation are pending. This is not a demonstrated FPS improvement.
-
 ## Android guest instruction profiling
 
 Perf9 adds opt-in Android perf-map and JIT-dump output in private app storage.
@@ -528,8 +508,8 @@ subsequent touch input or screenshot. No wait-target registers are captured,
 and this failed diagnostic is excluded from FPS results. The static Android
 core omits the socket backend's registration unit because it has no referenced
 global symbol. Perf12 adds the same explicit Android link anchor already used
-by the null backend and keeps debugging disabled by default. Device validation
-of this correction remains pending.
+by the null backend and keeps debugging disabled by default. The subsequent
+perf12 device diagnostic below validates this correction.
 
 The current pre-test private HDD, snapshots, shader caches, preferences and
 EEPROM are restored through the app's UID even after the diagnostic failure.
@@ -537,3 +517,64 @@ The downloaded backup checksum and restored HDD/EEPROM checksums match their
 pre-test contents. All temporary diagnostic properties are restored, and the
 emulator is stopped. The user's original game image and firmware/HDD files
 remain untouched.
+
+## Validated guest-wait diagnostic (perf12)
+
+Perf12 source `f59605b5abc64ac9286ecdf5756bb2a02ac1b5ae` builds successfully in
+[CI run 38019041384](https://github.com/jamalnexellis/X1Box/actions/runs/38019041384).
+The version is `1.2.9-pgr2-perf12` (41), with APK SHA-256
+`236d9af098efb761bf07c1b5f11306792cbf3cd2678c68eaab8c1d4bfbbedccd`.
+Inspection of the packaged ARM64 library confirms the socket registration
+anchor and i386 register features. The signing certificate matches perf11;
+an authenticated wireless update succeeds without uninstalling the app.
+
+In a separately authorized phone window, a fresh process loads the stationary
+race snapshot and touch A resumes it. Configuration, controller, EEPROM and
+snapshot checks pass. Both screenshots show coherent graphics and neutral
+controls, and the game remains in the foreground. This debugging session is
+excluded from FPS comparisons.
+
+The loopback debugger now starts successfully. The private RSP client verifies
+the guest instruction bytes, stops at the profiled poll, checks the stopped PC,
+and reads the i386 registers and only the four-byte polled word. The observed
+wait targets ordinary guest RAM and the word is nonzero. This identifies the
+wait location, but does not identify its writer or establish that GPU or audio
+work limits the frame rate. Raw registers, addresses and guest code stay private.
+
+The client removes its breakpoint and detaches. The temporary ADB forward is
+removed, and the current pre-test HDD, snapshots, caches, preferences and EEPROM
+are restored through the app's UID. The downloaded backup checksum and restored
+HDD/EEPROM checksums match this session's archive; diagnostic properties return
+to their original values and the emulator is stopped. Original user game and
+firmware/HDD files remain untouched.
+
+## Further opt-in translation candidate (perf13)
+
+The ARM64 [xemu-macos optimization ledger](https://github.com/MichaelJSr/xemu-macos/blob/macos-optimizations/docs/optimizations.md)
+describes removing per-block `can_do_io` stores when instruction counting and
+record/replay are disabled. Its performance reports concern another game and
+host and are not results for this fork or phone. The local translator emits
+these stores even into the profiled memory-poll block. MMIO encountered before
+the last instruction then takes a state-restore/recompile/re-execution path
+that exists for deterministic I/O scheduling.
+
+Perf13 adapts this candidate as `debug.xemu.tcg.elide_candoio=1`, off by default.
+The decision is latched before the first translated block and forced off with
+instruction counting or record/replay. Plugin, single-step, breakpoint-page,
+instruction-counted and memory-only replay blocks retain the existing stores.
+The normal CPU initialization, TB return and exception-exit paths keep the
+flag true. The MMU, MMIO callbacks, `mem_io_pc`, interrupt checks, exit-request
+checks, memory barriers and floating-point behavior are unchanged.
+
+Source `a20c4623fc893a23961d65f3cebcf2debdf1d936` builds successfully in
+[CI run 38019626143](https://github.com/jamalnexellis/X1Box/actions/runs/38019626143).
+The media/uniform sanitizer tests pass, and the Android native fixtures and
+Vulkan shaders compile. These checks do not validate CPU translation semantics.
+Version `1.2.9-pgr2-perf13` (42) has APK SHA-256
+`a5a02ba1b230bb49f4eb340db5814bd6b93bff9622f4f1e9d6a02684a3fa2e14`.
+The downloaded checksum matches CI, and packaged-library inspection confirms
+the mode log, socket registration anchor and guest register feature table.
+Its signing certificate matches perf12. The verified APK is available locally;
+an additional phone availability window is requested before installation.
+Device compatibility, emitted-code checks and same-APK performance validation
+are pending. This is not a demonstrated FPS improvement.
