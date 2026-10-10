@@ -785,5 +785,27 @@ Categories remain nested host wall times. A standalone fixture exercises the
 production condition handshake with POSIX-backed QEMU API adapters: prior
 notification, spurious wakeups, two independent frame predicates and 100 rounds
 of slot reuse. It does not validate Android scheduling, the QEMU adapters or
-Vulkan correctness. Build, fixture execution and a fresh device comparison
-remain pending.
+Vulkan correctness.
+
+Source `21ca92d1dae84ae6f363d779f2ec7a761949b2b1` builds successfully in
+[CI run 38064601850](https://github.com/jamalnexellis/X1Box/actions/runs/38064601850).
+Version `1.2.9-pgr2-perf16` (45) has APK SHA-256
+`26fe6a31ac96c682985f1f9ff1813b2cedc7dede468a7e7b49f165347494d064`.
+The handshake, XISO and uniform fixtures pass with ASan/UBSan on the CI host;
+the Android native fixtures and texture shaders compile. The downloaded APK
+matches CI's checksum and retains perf15's signer certificate identity. Its
+ARM64 library contains the submission-wait property, helper and extended
+finish-reason names. These checks do not verify the APK payload's signature
+cryptographically or establish a device performance improvement.
+
+The private analyzer passes eight offline checks for both phase schemas,
+partial/mixed-schema rejection, frame continuity, marker boundaries and event
+timestamps. Its phase names match the 31 production categories, whose frame
+line fits the Android log payload limit even with maximum-width counters.
+The next capture is prepared with checksum and foreground guards, fresh
+processes for both wait modes, the same snapshot and complete press/release
+inputs. Both traces use profiling, and shader disk caches may grow between
+them; they are diagnostic comparisons, not accepted FPS benchmarks. It will
+preserve the then-current state and all eight diagnostic properties through
+the app UID. A fresh phone-availability window and device validation remain
+pending. The candidate stays disabled by default.
