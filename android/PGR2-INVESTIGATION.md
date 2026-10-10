@@ -898,3 +898,37 @@ then-current app-owned state and all nine properties will be preserved and
 restored. The previous phone window has ended. Fresh availability and device
 correctness/performance validation remain pending; the candidate stays off
 by default.
+
+The five-minute device window completes all three planned captures. Seven
+reviewed images show coherent road/buildings/HUD, neutral controls in both
+stationary comparisons and movement into different scenery in the diagnostic
+trace. All runtime mode, native-presentation, configuration, controller and
+foreground checks pass. The instrumented movement segment contains 336
+complete flips, median 62.394 ms, p95 76.220 ms and maximum 205.076 ms.
+`display_reuse` counts zero in both initial and movement segments: the guarded
+candidate does not retain an image in these scenes. The trace alone does not
+identify which identity or exclusion check prevents reuse.
+
+The longest interval contains a complete 105.291 ms shader-compilation
+operation on PFIFO's thread, followed by an 18.342 ms pipeline creation. It
+also contains a 29.945 ms surface-download finish overlapping a 29.036 ms GPU
+fence wait. This captures a specific first-use compilation stall consistent
+with the new-content symptom; it does not explain every reported hitch or
+resolve the recurring readback caller. Across movement, surface-download
+finishes still occur once per complete flip (336 calls, 8,006.065 ms total,
+36.899 ms maximum). Texture decode peaks at 1.281 ms. Nested phases are not
+additive GPU timings.
+
+The separate same-APK, profiling-disabled stationary captures contain three
+complete accepted five-second windows each. Reuse off records 224 flips in
+15,133 ms (14.802 FPS); reuse on records 234 in 15,107 ms (15.490 FPS), an
+observed difference of 4.644%. Each mode has only one run, intervals vary
+substantially, disk shader caches can grow and clocks are uncontrolled. No
+repeatability or candidate-caused improvement is established; the diagnostic
+also found no reuse. The mode remains off and is not an accepted optimization.
+
+The current pre-test archive is restored through the app UID. Archive, HDD
+and EEPROM checksums match, EEPROM ownership and all nine originally empty
+properties are restored, debugger forwarding is absent and the emulator is
+stopped. Independent verification completes before the agreed deadline and
+the phone is released. Raw captures and game data remain private.
