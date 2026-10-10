@@ -465,3 +465,16 @@ description instead of linking the empty feature stub.
 This permits reading the registers and guest memory at the identified polling
 instruction to determine what the CPU is waiting for. Debugging captures and
 guest data stay outside the repository, and FPS comparisons use debugging off.
+
+Perf11 source `897d5d28ccea8af6fafea1a2464be615de56e562` builds successfully
+in [CI run 38017930331](https://github.com/jamalnexellis/X1Box/actions/runs/38017930331).
+The media/uniform sanitizer tests pass, and the existing Android native
+fixtures and Vulkan shaders compile. The APK has SHA-256
+`dc32a5014ba79d9216e36f7bc93717135e4abd8d688011484a7a2a88ac7250dd`.
+Inspection of the packaged ARM64 library confirms the i386 register feature
+table and the experimental switch are included. Its signing certificate
+matches perf10, permitting an update without uninstalling the development app.
+The private diagnostic client passes offline checks for fragmented packets,
+unexpected guest code, breakpoint removal and detach; these do not validate
+CPU semantics or device behavior. The user deferred phone testing. Perf10
+remains installed; there is no new phone capture or performance result.
