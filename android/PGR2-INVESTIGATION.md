@@ -1828,8 +1828,11 @@ retaining the existing flush/propagation spans and command-buffer page tracking.
 Changed, unuploaded or larger ranges keep the existing finish-and-upload path;
 the mapped buffer is obtained again after that finish can advance the frame.
 No hash match, game ID, shader omission or weakened GPU dependency is used.
-The experiment defaults off. Sixty-frame counters report equal-data skips,
-fallbacks and vertex finishes for the next device comparison.
+The experiment defaults off. The opt-in stall profiler reports equal-data
+skips and comparison fallbacks alongside the existing vertex finish timings.
+The byte fields are requested upload sizes, not measured comparison bandwidth.
+The initial APK check caught that the old performance-log counters were
+compiled out; the final diagnostic uses the independently enabled stall profiler.
 
 Host ASan/UBSan checks pass, including changing each byte of a 64 KiB generated
 range, unaligned/end-of-allocation spans, overflow/oversize rejection, inaccessible
@@ -1840,7 +1843,7 @@ copy/depth-view fixtures also pass. These checks validate the shared comparison
 primitive and buffer ordering, not full emulator compatibility or a FPS gain.
 
 The local APK is version 58 / `1.2.9-pgr2-perf29`, package `.dev.local`, SHA-256
-`c27b3af6fd10c9fe8b5b083a4b3bed4f966533f9e87c4b496491aea8aaa677b2`.
+`6217be14876abed57533c898f2faa73ae319c73ff5885a319f42c465ef4d553c`.
 Compilation, v2 signature and manifest checks pass; the native generated-data
 fixtures also cross-compile for arm64. The next device test is prepared with
 fresh preservation/restoration of all sixteen properties and repeated

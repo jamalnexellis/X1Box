@@ -90,6 +90,7 @@ void pgraph_vk_update_vertex_ram_buffer(PGRAPHState *pg, hwaddr offset,
      */
     if (find_next_bit(r->cb_vertex_pages, end_bit, start_bit) < end_bit) {
         if (vertex_same_bytes_enabled()) {
+            int64_t compare_start = nv2a_stall_start();
             StorageBuffer *current = get_staging_buffer(r, BUFFER_VERTEX_RAM);
             bool uploaded = find_next_zero_bit(get_uploaded_bitmap(r),
                                                end_bit, start_bit) >= end_bit;
@@ -100,10 +101,12 @@ void pgraph_vk_update_vertex_ram_buffer(PGRAPHState *pg, hwaddr offset,
                  * allocation. Keep its existing flush/propagation ranges and
                  * track the whole range exactly as the ordinary upload does. */
                 bitmap_set(r->cb_vertex_pages, start_bit, nbits);
-                OPT_STAT_INC(vtx_same_bytes_skips);
+                nv2a_stall_record(NV2A_STALL_VERTEX_SAME_BYTES,
+                                   compare_start, size);
                 return;
             }
-            OPT_STAT_INC(vtx_same_bytes_fallbacks);
+            nv2a_stall_record(NV2A_STALL_VERTEX_COMPARE_FALLBACK,
+                               compare_start, size);
         }
         pgraph_vk_finish(pg, VK_FINISH_REASON_VERTEX_BUFFER_DIRTY);
     }

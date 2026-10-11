@@ -44,7 +44,7 @@ static const char *const stall_phase_names[] = {
     "display_reuse", "shader_preprocess", "shader_parse", "shader_link",
     "shader_spirv", "readback_deferred", "readback_buffer", "readback_pending",
     "readback_dirty", "readback_evict", "texture_range_readback",
-    "cpu_readback_wait"
+    "cpu_readback_wait", "vertex_same_bytes", "vertex_compare_fallback"
 };
 
 void nv2a_stall_profile_init(void)
