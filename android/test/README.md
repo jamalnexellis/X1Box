@@ -256,3 +256,9 @@ discarding them could hide stalls. Confirm moving player/rivals and capture
 timing separately. Countdown, different trajectories and barrier contact
 remain comparison limits. These counters measure five-second averages;
 frame-time percentiles require a separate recorder.
+
+Bound APK installation waits separately from gameplay. A committed Android
+installation can finish after its ADB client closes, so verify the final
+package version and APK hash again before releasing the phone. Preserve
+original lab data independently of installer completion, and keep platform
+verification settings in place.

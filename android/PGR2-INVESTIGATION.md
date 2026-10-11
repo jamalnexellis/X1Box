@@ -2419,13 +2419,18 @@ statuses are zero. Captured emulator processes show no fatal exception,
 assertion or device loss. Internal scanout is 1920x1440 at 3x, with native
 2340x1080 presentation. This covers short moving starts, not complete laps.
 
-The blocked final comparison is cancelled without accepting the Play Protect
-prompt or changing verification settings. The three measured runs remain
-separate from that incomplete installation attempt. Lab HDD/preferences/
+The final gameplay comparison is stopped while installation waits on Play
+Protect. Verification settings are unchanged. The three measured runs remain
+separate from that incomplete gameplay attempt. Lab HDD/preferences/
 EEPROM hashes and all nineteen diagnostic properties are restored and verified
 at 00:17:19 Madrid. The installer delay exceeds the planned 00:16:25 session
 deadline; a future harness must bound installation waits as well as gameplay.
-The pending comparison session subsequently disappears. Perf36 remains
-installed with the previously verified APK hash, and the emulator is stopped.
+Closing the ADB client does not cancel the committed Android install: the
+final package check at 00:27:32 finds perf35 installed after the pending
+session disappears. Restoring the previously verified perf36 APK succeeds.
+At 00:28:52, version 65 and its exact APK hash are verified again, along
+with all nineteen original properties and HDD/preferences/EEPROM hashes.
+Perf36 is installed and its emulator is stopped. Future tests must track
+committed installation completion independently of the host client process.
 The other Android profile remains untouched. No raw captures, traces, game
 data or caches are uploaded; local checks continue with Judge and CI/CD off.
