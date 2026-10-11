@@ -2267,3 +2267,117 @@ the protected test deadline of 22:51:16. The emulator is stopped and the phone
 is released with perf34 installed. Native fixtures, APK compilation and
 verification run locally; Judge and CI/CD are not used. Private captures,
 traces, game files and runtime caches are not uploaded.
+
+### Perf35 presentation and timer diagnosis
+
+A follow-up scheduler trace resolves the previously selected 60.793 ms
+`vkQueuePresentKHR` stall. Over that interval the render worker sleeps for
+60.577 ms and executes for 0.180 ms; PFIFO waits throughout while the vCPU
+executes for 48.519 ms. This particular stall is native presentation blocking
+the graphics command consumer, rather than render-worker CPU starvation.
+It does not establish the cause of every slow frame.
+
+Four unprofiled moving starts compare presentation reuse OFF/ON/ON/OFF at
+3x, with compiler preparation and sparse vertex propagation enabled. Complete
+five-second windows pool to 24.949/24.988 FPS, a 0.157% difference below repeat
+variation. The reviewed starts show coherent road, buildings and HUD with
+three moving rivals. Presentation reuse stays disabled by default; this
+comparison provides no accepted sustained FPS gain.
+
+Perf35 adds opt-in `XEMU_VBLANK` timer-delivery diagnostics and an optional
+phase-preserving regular timer grid. Android `debug.xemu.vblank.adaptive=0`
+selects it; the default retains adaptive behavior and the existing period
+selection. Missed periods are skipped without a burst. PCRTC interrupt
+assertion/acknowledgement, flip waits and render fences are preserved. A
+30,000-callback native fixture checks reference-clock agreement, lateness,
+large gaps and saturation on the sanitized host and arm64 phone. This is
+an experiment, not a verified correction to Xbox hardware timing.
+
+In separate diagnostic starts, adaptive/regular timer delivery is
+55.003/59.539 Hz, with 323/0 deferred callbacks over four selected windows.
+Timer delivery does not prove guest interrupt handling or simulation speed.
+An unprofiled adaptive/regular/regular/adaptive comparison measures
+26.904/25.093/27.550/24.954 FPS. Pooled adaptive/regular values are
+25.928/26.320 FPS, a 1.513% difference below the 7-10% repeat variation.
+No FPS gain is accepted and the adaptive default remains enabled. All six
+reviewed diagnostic/unprofiled starts show player and three rival cars moving,
+coherent road/buildings/HUD and responding throttle/steering. They cover short
+starts with differing contact and trajectories, not a full lap. End thermal
+statuses are zero; captured processes have no fatal exception, assertion or
+Vulkan device loss. Internal scanout is 1920x1440 with native 2340x1080 output.
+
+The protected timer-comparison session restores the active lab HDD,
+preferences, EEPROM and nineteen diagnostic properties at 23:24:11 Madrid.
+The subsequent CPU-profile session restores them again at 23:26:43. The
+older installation remains untouched in its other Android profile.
+
+### Perf36 generic primitive assembly
+
+A fresh moving-race CPU-cycle sample identifies primitive index rewriting
+as 10.468% of PFIFO's weighted sampled cycles. PFIFO and vCPU account for
+30.646% and 47.002% of sampled process cycles respectively. These are event
+shares from overlapping threads, not wall time or whole-phone utilization.
+The vCPU sample also contains native dispatch work and roughly 13.6% in
+a translated RAM polling loop. Skipping guest polling without proving its
+synchronization semantics would be incorrect. Samples, translated game code,
+maps and instruction addresses stay private. Kernel symbol access is not
+needed and no device security setting is relaxed for this diagnosis.
+
+Perf36 batches the two line or three triangle index stores and publishes
+the output count once per primitive. The index allocation is separate from
+the result descriptor; this removes repeated alias-dependent descriptor
+loads/stores in the generated host code. Allocation, primitive topology,
+winding, incomplete-tail behavior and provoking-vertex selection are
+unchanged. Both OpenGL and Vulkan use this generic assembler, with no game,
+device or shader-specific branch. A compile-time scalar reference is used
+only by the differential fixture.
+
+The sanitized host fixture and the Android fixture with the real QEMU/GLib
+allocator compare 48,960 complete index sequences, counts and passthrough
+results. Every supported primitive/polygon mode and flat/provoking setting
+is covered with indexed input and draw ranges. All checks pass. Six
+alternating arm64 fixture timings measure 15.623/5.393/5.202/14.261/14.186/
+4.735 ms for scalar/batched/batched/scalar/scalar/batched assembly of 300
+long strips. Means are 14.690/5.110 ms, about 65.2% less time in this isolated
+routine. This is not a game FPS or sustained simulation-speed gain.
+
+### Perf36 moving-race device comparison and delivery
+
+The five-minute protected window completes three unprofiled 3x starts in
+the order perf35/perf36/perf36. The final perf35 repeat is omitted to reserve
+restoration time; this is not a completed ABBA comparison. Every installation
+is checked against its local APK SHA-256. Compiler preparation, adaptive
+VBlank, sparse vertex propagation, the cache seed and the 24-second touch
+input plan are held constant; presentation reuse and diagnostics are off.
+Each case loads the protected race seed and restarts the race from its game
+menu, then advances the player and three AI cars.
+
+Four complete five-second flip windows per process measure 26.473 FPS for
+perf35 and 27.610/26.212 FPS for perf36. Pooled perf36 is 26.911 FPS, 1.656%
+above the single baseline. This difference is below repeat variation and
+the incomplete comparison cannot establish an accepted sustained FPS gain.
+The reduced primitive-assembly cost is verified independently by the fixture;
+its contribution to sustained gameplay remains uncertain. Original simulation
+speed at Full HD or higher is still not verified.
+
+All three mid/end capture pairs show coherent road, buildings, player car
+and HUD. Three rivals move in the mid captures and advance along the course
+and minimap. Throttle and steering respond and release. Game clocks advance
+from 1.454/2.204/2.687 to 22.937/23.937/23.254 seconds, but differing contact,
+capture timing and trajectories limit comparisons. These are short starts,
+not full laps or full-game correctness checks. Captured process logs contain
+no fatal exception, assertion or device loss; all end thermal statuses are
+zero. Internal scanout is 1920x1440 at 3x and native output is 2340x1080.
+
+The lab's original HDD/preferences/EEPROM hashes and all nineteen diagnostic
+properties are restored and verified at 23:47:45 Madrid, before the original
+23:48:49 test deadline. The emulator is stopped and perf36 remains installed.
+The user installation in the other Android profile is untouched. APK/native
+builds and checks run locally; Judge and CI/CD are not used. Raw captures,
+profiles, translated code, game files and caches remain private.
+
+Perf36 uses version 65 / `1.2.9-pgr2-perf36` in `.dev.local`. The v2 signature,
+existing signing certificate, package/version and actual arm64 diagnostic
+strings pass verification. The delivery APK matches the tested artifact;
+52 selected build inputs are checked against the committed sources. APK
+SHA-256: `2590b9dd79a90116703a40f56ab18ead63154f82ed7054b4dcd146c3f64ed840`.

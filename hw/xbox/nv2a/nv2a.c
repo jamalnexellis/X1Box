@@ -22,6 +22,13 @@
 #include "hw/xbox/nv2a/nv2a_int.h"
 #include "qemu/main-loop.h"
 #include "ui/xemu-settings.h"
+#include "vblank-timing.h"
+#include "pgraph/stall-profile.h"
+
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <sys/system_properties.h>
+#endif
 
 void nv2a_update_irq(NV2AState *d)
 {
@@ -218,6 +225,65 @@ static int64_t nv2a_calc_vblank_period_ns(NV2AState *d)
 }
 
 static int64_t s_last_vblank_fire_ns;
+static bool s_adaptive_vblank = true;
+
+#ifdef __ANDROID__
+/* Timer callbacks run under the BQL. Diagnostics never affect IRQ delivery. */
+static struct {
+    int64_t start_ns, last_fire_ns, delta_sum_ns, delta_max_ns;
+    int64_t late_sum_ns, late_max_ns;
+    uint64_t fired, deferred, pending, waiting, unlocked;
+} s_vblank_profile;
+
+static void nv2a_vblank_profile(NV2AState *d, int64_t now, int64_t period,
+                               bool deferred, bool unlocked)
+{
+    if (!nv2a_stall_profile_enabled) {
+        return;
+    }
+    if (!s_vblank_profile.start_ns) {
+        s_vblank_profile.start_ns = now;
+        s_vblank_profile.last_fire_ns = now;
+        return;
+    }
+    int64_t delta = MAX(now - s_vblank_profile.last_fire_ns, 0);
+    int64_t late = MAX(now - d->vblank_next_target_ns, 0);
+    s_vblank_profile.last_fire_ns = now;
+    s_vblank_profile.fired++;
+    s_vblank_profile.deferred += deferred;
+    s_vblank_profile.unlocked += unlocked;
+    s_vblank_profile.pending += !!(d->pcrtc.pending_interrupts &
+                                   NV_PCRTC_INTR_0_VBLANK);
+    s_vblank_profile.waiting += !!qatomic_read(&d->pgraph.waiting_for_flip);
+    s_vblank_profile.delta_sum_ns += delta;
+    s_vblank_profile.delta_max_ns = MAX(s_vblank_profile.delta_max_ns, delta);
+    s_vblank_profile.late_sum_ns += late;
+    s_vblank_profile.late_max_ns = MAX(s_vblank_profile.late_max_ns, late);
+    if (now - s_vblank_profile.start_ns >= 5 * NANOSECONDS_PER_SECOND) {
+        __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+            "XEMU_VBLANK us=%" PRId64 " adaptive=%d period_ns=%" PRId64
+            " fired=%" PRIu64 " deferred=%" PRIu64 " pending=%" PRIu64
+            " waiting=%" PRIu64 " unlocked=%" PRIu64
+            " delta_sum_ns=%" PRId64 " delta_max_ns=%" PRId64
+            " late_sum_ns=%" PRId64 " late_max_ns=%" PRId64
+            " vdisplay=%u vcrtc=%u hcrtc=%u vpll=%u",
+            (now - s_vblank_profile.start_ns) / 1000, s_adaptive_vblank,
+            period, s_vblank_profile.fired, s_vblank_profile.deferred,
+            s_vblank_profile.pending, s_vblank_profile.waiting,
+            s_vblank_profile.unlocked, s_vblank_profile.delta_sum_ns,
+            s_vblank_profile.delta_max_ns, s_vblank_profile.late_sum_ns,
+            s_vblank_profile.late_max_ns, d->pramdac.fp_vdisplay_end,
+            d->pramdac.fp_vcrtc, d->pramdac.fp_hcrtc,
+            d->pramdac.video_clock_coeff);
+        memset(&s_vblank_profile, 0, sizeof(s_vblank_profile));
+        s_vblank_profile.start_ns = now;
+        s_vblank_profile.last_fire_ns = now;
+    }
+}
+#else
+static void nv2a_vblank_profile(NV2AState *d, int64_t now, int64_t period,
+                               bool deferred, bool unlocked) { }
+#endif
 
 static void nv2a_vblank_timer_cb(void *opaque)
 {
@@ -258,7 +324,8 @@ static void nv2a_vblank_timer_cb(void *opaque)
      */
     int64_t effective_frame_ns = d->avg_frame_ns ? d->avg_frame_ns
                                                  : d->last_frame_ns;
-    if (g_config.perf.unlock_framerate && effective_frame_ns > 0) {
+    if (s_adaptive_vblank && g_config.perf.unlock_framerate &&
+        effective_frame_ns > 0) {
         int64_t enter_thresh = period + period / 2;
         int64_t exit_thresh  = period * 2 + period / 2;
         if (!d->unlock_mode_active && effective_frame_ns < enter_thresh) {
@@ -290,7 +357,7 @@ static void nv2a_vblank_timer_cb(void *opaque)
     bool in_deferral_window = effective_frame_ns > 0 &&
                               time_in_frame < defer_window;
 
-    if (in_deferral_window &&
+    if (s_adaptive_vblank && in_deferral_window &&
         d->flip_active &&
         !qatomic_read(&d->pgraph.waiting_for_flip) &&
         !d->vblank_deferred) {
@@ -330,6 +397,7 @@ static void nv2a_vblank_timer_cb(void *opaque)
     }
     s_last_vblank_fire_ns = now;
 
+    nv2a_vblank_profile(d, now, period, was_deferred, unlocked);
     d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
     d->pcrtc.raster = 0;
     nv2a_update_irq(d);
@@ -348,7 +416,10 @@ static void nv2a_vblank_timer_cb(void *opaque)
      * exactly one period to maintain a strict 60Hz cadence for games
      * that count VBLANKs for timing.
      */
-    if (was_deferred || unlocked) {
+    if (!s_adaptive_vblank) {
+        d->vblank_next_target_ns = nv2a_vblank_next_regular(
+            d->vblank_next_target_ns, now, period);
+    } else if (was_deferred || unlocked) {
         d->vblank_next_target_ns = now + period;
     } else {
         d->vblank_next_target_ns += period;
@@ -432,6 +503,14 @@ static void nv2a_init_vga(NV2AState *d)
 
     d->vblank_timer = timer_new_ns(QEMU_CLOCK_REALTIME,
                                    nv2a_vblank_timer_cb, d);
+#ifdef __ANDROID__
+    char vblank_property[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.vblank.adaptive", vblank_property);
+    s_adaptive_vblank = strcmp(vblank_property, "0") != 0;
+    memset(&s_vblank_profile, 0, sizeof(s_vblank_profile));
+    __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+                       "adaptive VBlank experiment=%d", s_adaptive_vblank);
+#endif
     d->vblank_next_target_ns = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) +
                                NANOSECONDS_PER_SECOND / 60;
     d->flip_active = false;
@@ -504,6 +583,10 @@ static void nv2a_reset(NV2AState *d)
     d->avg_frame_ns = 0;
     d->unlock_mode_active = false;
     d->vblank_deferred = false;
+#ifdef __ANDROID__
+    memset(&s_vblank_profile, 0, sizeof(s_vblank_profile));
+#endif
+    s_last_vblank_fire_ns = 0;
     d->pgraph.waiting_for_context_switch = false;
 
     d->pmc.pending_interrupts = 0;

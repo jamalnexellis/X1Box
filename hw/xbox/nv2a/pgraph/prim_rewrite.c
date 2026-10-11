@@ -23,6 +23,11 @@
 #include "qemu/osdep.h"
 #include "prim_rewrite.h"
 
+/* The scalar build is retained as a differential-test reference. */
+#ifndef NV2A_PRIM_REWRITE_BATCHED
+#define NV2A_PRIM_REWRITE_BATCHED 1
+#endif
+
 void pgraph_prim_rewrite_init(PrimRewriteBuf *buf)
 {
     buf->data = NULL;
@@ -157,8 +162,17 @@ static inline void emit_vertex(PrimRewrite *r, uint32_t v)
 
 static inline void emit_line(PrimRewrite *r, uint32_t a, uint32_t b)
 {
+#if NV2A_PRIM_REWRITE_BATCHED
+    /* The index allocation is separate from the result descriptor. Publish
+     * the count once, avoiding alias-driven reloads between index stores. */
+    unsigned int i = r->num_indices;
+    r->indices[i] = a;
+    r->indices[i + 1] = b;
+    r->num_indices = i + 2;
+#else
     emit_vertex(r, a);
     emit_vertex(r, b);
+#endif
 }
 
 /* Place provoking vertex p at index 0. */
@@ -174,9 +188,17 @@ static inline void emit_line_pv(PrimRewrite *r, uint32_t a, uint32_t b,
 
 static inline void emit_tri(PrimRewrite *r, uint32_t a, uint32_t b, uint32_t c)
 {
+#if NV2A_PRIM_REWRITE_BATCHED
+    unsigned int i = r->num_indices;
+    r->indices[i] = a;
+    r->indices[i + 1] = b;
+    r->indices[i + 2] = c;
+    r->num_indices = i + 3;
+#else
     emit_vertex(r, a);
     emit_vertex(r, b);
     emit_vertex(r, c);
+#endif
 }
 
 /* Rotate provoking vertex p to index 0, preserving winding of (a, b, c). */

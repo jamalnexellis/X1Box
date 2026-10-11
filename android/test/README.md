@@ -149,3 +149,66 @@ Android for comparisons; the default is enabled. The startup log reports
 whether preparation succeeded and its host elapsed time. A failure retains
 normal shader compilation. This shifts initialization work to startup; it
 does not eliminate compilation of new shaders or establish a game FPS gain.
+
+# Optional regular VBlank cadence
+
+`debug.xemu.vblank.adaptive=0` before launch selects a fixed, phase-preserving
+deadline grid. Late callbacks skip missed periods and schedule one future
+deadline; they do not deliver a catch-up burst. Existing period selection,
+PCRTC interrupt assertion and acknowledgement, flip waiting and render fences
+remain in place. The default keeps the existing adaptive deferral behavior.
+This switch is an experiment, not a verified hardware timing correction.
+
+The native target `test-vblank-timing` compares 30,000 callbacks against an
+independently stepped reference clock at the existing NTSC/PAL periods and a
+one-nanosecond period. It checks exact/late deadlines, phase preservation,
+large gaps and signed-clock saturation:
+
+```sh
+cc -std=c11 -I . -UNDEBUG -Wall -Wextra -Werror \
+  -fsanitize=address,undefined android/test/cpp/test-vblank-timing.c \
+  -o "$task_dir/vblank-timing-check"
+"$task_dir/vblank-timing-check"
+```
+
+With `debug.xemu.vk.stall_profile=1`, `XEMU_VBLANK` reports approximately
+five-second timer-delivery totals: cadence, deferred fires, IRQ already
+pending before assertion, flip wait state, callback intervals and deadline
+lateness. The window also reports the current mode registers. Timer delivery
+is not proof of guest interrupt handling, simulation speed or displayed FPS.
+Measure FPS separately with diagnostics disabled.
+
+# Primitive index assembly
+
+`test-prim-rewrite` compiles the production assembler twice: the original
+scalar emitters with renamed entry points, and the default batched emitters.
+It compares complete index sequences, counts and passthrough/null behavior
+across 48,960 cases covering every supported primitive, polygon mode, flat
+shading/provoking-vertex combination, indexed input and multiple draw ranges.
+Inputs include zero counts, incomplete tails, repeated/full-width indices,
+negative range counts and long strips. Android links the real QEMU/GLib
+headers and allocator. Assertions remain enabled in the native CMake target.
+
+For standalone host ASan/UBSan checks, the fixture-only shim supplies standard
+C declarations and a checked realloc; production does not include it:
+
+```sh
+task_flags="-std=gnu11 -D_GNU_SOURCE -O3 -UNDEBUG -Wall -Wextra -Werror"
+task_flags="$task_flags -fsanitize=address,undefined"
+task_flags="$task_flags -Iandroid/test/cpp/prim-rewrite-host-shim -I."
+cc $task_flags -DNV2A_PRIM_REWRITE_BATCHED=0 \
+  -Dpgraph_prim_rewrite_init=reference_prim_rewrite_init \
+  -Dpgraph_prim_rewrite_finalize=reference_prim_rewrite_finalize \
+  -Dpgraph_prim_rewrite_get_output_mode=reference_prim_rewrite_get_output_mode \
+  -Dpgraph_prim_rewrite_ranges=reference_prim_rewrite_ranges \
+  -Dpgraph_prim_rewrite_indexed=reference_prim_rewrite_indexed \
+  -c hw/xbox/nv2a/pgraph/prim_rewrite.c -o "$task_dir/primitive-reference.o"
+cc $task_flags android/test/cpp/test-prim-rewrite.c \
+  hw/xbox/nv2a/pgraph/prim_rewrite.c "$task_dir/primitive-reference.o" \
+  -o "$task_dir/primitive-check"
+"$task_dir/primitive-check"
+```
+
+The six alternating timings measure only strip assembly in this fixture.
+They do not measure game FPS, guest simulation speed or complete renderer
+correctness. Compare the actual APKs in moving gameplay with diagnostics off.

@@ -1333,6 +1333,43 @@ add_executable(test-render-idle EXCLUDE_FROM_ALL
 target_include_directories(test-render-idle PRIVATE "${REPO_ROOT}")
 target_compile_options(test-render-idle PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(test-vblank-timing EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-vblank-timing.c"
+)
+target_include_directories(test-vblank-timing PRIVATE "${REPO_ROOT}")
+target_compile_options(test-vblank-timing PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
+add_library(prim-rewrite-reference OBJECT EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/hw/xbox/nv2a/pgraph/prim_rewrite.c"
+)
+target_include_directories(prim-rewrite-reference PRIVATE
+  "$<TARGET_PROPERTY:xemu_core,INCLUDE_DIRECTORIES>")
+target_compile_options(prim-rewrite-reference PRIVATE -O3 -UNDEBUG -Wall -Wextra -Werror -Wno-unused-parameter)
+target_compile_definitions(prim-rewrite-reference PRIVATE
+  COMPILING_PER_TARGET CONFIG_TARGET="config-target.h"
+  NV2A_PRIM_REWRITE_BATCHED=0
+  pgraph_prim_rewrite_init=reference_prim_rewrite_init
+  pgraph_prim_rewrite_finalize=reference_prim_rewrite_finalize
+  pgraph_prim_rewrite_get_output_mode=reference_prim_rewrite_get_output_mode
+  pgraph_prim_rewrite_ranges=reference_prim_rewrite_ranges
+  pgraph_prim_rewrite_indexed=reference_prim_rewrite_indexed
+)
+add_dependencies(prim-rewrite-reference glib_ep)
+
+add_executable(test-prim-rewrite EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-prim-rewrite.c"
+  "${CMAKE_CURRENT_LIST_DIR}/libintl_stub.c"
+  "${REPO_ROOT}/hw/xbox/nv2a/pgraph/prim_rewrite.c"
+  $<TARGET_OBJECTS:prim-rewrite-reference>
+)
+target_include_directories(test-prim-rewrite PRIVATE
+  "$<TARGET_PROPERTY:xemu_core,INCLUDE_DIRECTORIES>")
+target_compile_options(test-prim-rewrite PRIVATE -O3 -UNDEBUG -Wall -Wextra -Werror -Wno-unused-parameter)
+target_compile_definitions(test-prim-rewrite PRIVATE
+  COMPILING_PER_TARGET CONFIG_TARGET="config-target.h")
+target_link_libraries(test-prim-rewrite PRIVATE glib-2.0)
+add_dependencies(test-prim-rewrite glib_ep)
+
 if(XEMU_ENABLE_VULKAN)
   add_executable(test-glslang-prewarm EXCLUDE_FROM_ALL
     "${REPO_ROOT}/android/test/cpp/test-glslang-prewarm.c"
