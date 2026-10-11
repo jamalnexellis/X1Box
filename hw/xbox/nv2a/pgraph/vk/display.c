@@ -2589,6 +2589,48 @@ void pgraph_vk_finalize_display(PGRAPHState *pg)
     destroy_descriptor_pool(pg);
 }
 
+#ifdef __ANDROID__
+static void record_present_reuse_decision(PGRAPHVkDisplayState *disp,
+                                         uint32_t reasons, int64_t now_us)
+{
+    if (!nv2a_stall_profile_enabled) {
+        return;
+    }
+    if (!disp->reuse_diagnostic.checks) {
+        disp->reuse_diagnostic.started_us = now_us;
+    }
+    disp->reuse_diagnostic.checks++;
+    disp->reuse_diagnostic.reused += reasons == 0;
+    for (unsigned int i = 0; i < VK_PRESENT_REUSE_REASON_COUNT; i++) {
+        disp->reuse_diagnostic.reasons[i] +=
+            (reasons & VK_PRESENT_REUSE_BIT(i)) != 0;
+    }
+    if (now_us < disp->reuse_diagnostic.started_us) {
+        disp->reuse_diagnostic.started_us = now_us;
+        return;
+    }
+    uint64_t elapsed = (uint64_t)now_us -
+        (uint64_t)disp->reuse_diagnostic.started_us;
+    if (elapsed < 5000000) {
+        return;
+    }
+    const uint64_t *counts = disp->reuse_diagnostic.reasons;
+    __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+        "XEMU_PRESENT_REUSE us=%" PRIu64 " checks=%" PRIu64
+        " reused=%" PRIu64 " cold=%" PRIu64 " invalid_serial=%" PRIu64
+        " upload=%" PRIu64 " video=%" PRIu64 " capture=%" PRIu64
+        " clock=%" PRIu64 " source=%" PRIu64 " content=%" PRIu64
+        " geometry=%" PRIu64,
+        elapsed, disp->reuse_diagnostic.checks, disp->reuse_diagnostic.reused,
+        counts[VK_PRESENT_REUSE_COLD], counts[VK_PRESENT_REUSE_INVALID_SERIAL],
+        counts[VK_PRESENT_REUSE_UPLOAD], counts[VK_PRESENT_REUSE_VIDEO],
+        counts[VK_PRESENT_REUSE_CAPTURE], counts[VK_PRESENT_REUSE_CLOCK],
+        counts[VK_PRESENT_REUSE_SOURCE], counts[VK_PRESENT_REUSE_CONTENT],
+        counts[VK_PRESENT_REUSE_GEOMETRY]);
+    memset(&disp->reuse_diagnostic, 0, sizeof(disp->reuse_diagnostic));
+}
+#endif
+
 void pgraph_vk_render_display(PGRAPHState *pg)
 {
     NV2AState *d = container_of(pg, NV2AState, pgraph);
@@ -2658,7 +2700,7 @@ void pgraph_vk_render_display(PGRAPHState *pg)
             .display_addr = display_addr,
             .draw_time = surface->draw_time,
             .draw_generation = surface->draw_generation,
-            .surface_list_gen = r->surface_list_gen,
+            .surface_serial = surface->present_serial,
             .pitch = surface->pitch, .width = surface->width,
             .height = surface->height,
             .line_offset = vga_display_params.line_offset,
@@ -2673,11 +2715,13 @@ void pgraph_vk_render_display(PGRAPHState *pg)
         };
         bool video_active = disp->pvideo.state.enabled ||
             (d->pvideo.regs[NV_PVIDEO_BUFFER] & NV_PVIDEO_BUFFER_0_USE);
-        if (vk_present_can_reuse(&disp->reuse_cache, &key,
-                                qemu_clock_get_us(QEMU_CLOCK_REALTIME),
-                                surface->upload_pending, video_active,
-                                qatomic_read(&disp->capture.state) !=
-                                    DISPLAY_CAPTURE_IDLE)) {
+        int64_t now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+        uint32_t reasons = vk_present_reuse_reasons(
+            &disp->reuse_cache, &key, now_us, surface->upload_pending,
+            video_active,
+            qatomic_read(&disp->capture.state) != DISPLAY_CAPTURE_IDLE);
+        record_present_reuse_decision(disp, reasons, now_us);
+        if (!reasons) {
             nv2a_stall_record(NV2A_STALL_DISPLAY_REUSE, reuse_start, 0);
             return;
         }

@@ -317,6 +317,7 @@ typedef struct SurfaceBinding {
     unsigned int download_row_count; // 0 = full surface
     uint32_t draw_generation;
     uint32_t download_generation;
+    uint64_t present_serial; /* Unique active binding lifetime, not a handle. */
 
     BasicSurfaceFormatInfo fmt;
     SurfaceFormatInfo host_fmt;
@@ -846,6 +847,11 @@ typedef struct PGRAPHVkDisplayState {
     bool reuse_identical_present; /* Opt-in, latched before worker creation. */
     VkPresentReuseCache reuse_cache;
     VkPresentReuseKey reuse_candidate;
+    struct {
+        uint64_t checks, reused;
+        uint64_t reasons[VK_PRESENT_REUSE_REASON_COUNT];
+        int64_t started_us;
+    } reuse_diagnostic;
     VkSwapchainKHR swapchain;
     VkFormat swapchain_format;
     /* Format the display render pass was built for; framebuffers wrapping
@@ -1305,6 +1311,7 @@ typedef struct PGRAPHVkState {
     GHashTable *surface_addr_map;
     bool surfaces_finalizing;
     uint32_t surface_list_gen;
+    uint64_t last_present_surface_serial;
     uint32_t surface_draw_gen; /* Incremented when any surface becomes draw_dirty */
     SurfaceBinding *color_binding, *zeta_binding;
     bool downloads_pending;

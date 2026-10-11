@@ -1845,8 +1845,97 @@ primitive and buffer ordering, not full emulator compatibility or a FPS gain.
 The local APK is version 58 / `1.2.9-pgr2-perf29`, package `.dev.local`, SHA-256
 `6217be14876abed57533c898f2faa73ae319c73ff5885a319f42c465ef4d553c`.
 Compilation, v2 signature and manifest checks pass; the native generated-data
-fixtures also cross-compile for arm64. The next device test is prepared with
-fresh preservation/restoration of all sixteen properties and repeated
-enabled/disabled moving starts at 3x, followed by separate profiled samples.
-It has not run yet. No measured perf29 gain or sustained Full HD speed is
-claimed. Builds/checks remain local, CI/CD disabled and Judge unused.
+fixtures also cross-compile for arm64. Builds/checks remain local, CI/CD
+disabled and Judge unused.
+
+### Perf29 moving device comparison: waits avoided, no FPS gain
+
+The guarded CPU comparison fixture and generated Vulkan buffer/copy fixtures
+pass on the phone's Adreno 830. A fresh ten-minute window then measures four
+24-second driving starts at 3x in OFF/ON/ON/OFF order, with profiling off,
+all other settings fixed and D24 queued copy off. Each launch restores the
+immutable older Slot 2 and uses the game's Restart Race command. Four complete
+five-second flip windows wholly inside each driving marker give:
+
+| Exact vertex comparison | First descriptive FPS | Second descriptive FPS | Pooled FPS |
+| --- | ---: | ---: | ---: |
+| OFF | 27.121 | 26.401 | 26.761 |
+| ON | 26.648 | 26.867 | 26.758 |
+
+The pooled difference is -0.013%; there is no accepted FPS improvement, and
+the option remains off by default. Early captures show the player and three
+AI rivals moving. Reviewed mid/end images have coherent buildings, road and
+HUD. Later trajectories differ and include barrier contact; these short runs
+do not establish a clean full lap, sustained original speed or complete game
+compatibility. Internal scanout is 1920x1440 at 3x, presented to a 2340x1080
+output; this is not a measured native 1920x1080 game mode. End thermal status
+is zero in all four cases. No fatal exception or device loss appears in their
+captured process logs.
+
+Separate 1x ON/OFF/ON diagnostic runs contain 690/684/690 complete frames:
+
+| Vertex comparison | Exact-data skips | Comparison fallbacks | Vertex finishes | Total vertex finish wall time |
+| --- | ---: | ---: | ---: | ---: |
+| ON, first | 139 | 18 | 18 | 62.461 ms |
+| OFF | 0 | 0 | 150 | 549.270 ms |
+| ON, repeat | 153 | 19 | 19 | 64.053 ms |
+
+Skipped-byte counters are 1,404,928 and 1,540,096 requested bytes, not measured
+comparison bandwidth. The experiment does avoid vertex-related finishes in
+this workload, but the unprofiled 3x result does not show more FPS. Diagnostic
+presentation counts are 1426/1434/1445, with host wall totals of
+1200.890/1205.102/1172.667 ms. First-ON pipeline creation is 535.109 ms across
+40 calls; texture decoding is 32.701 ms across 269 calls. None of the three
+movement traces records a texture reuse wait. These nested/overlapping host
+times are not a GPU utilization measurement or an additive/causal frame budget;
+profiling overhead and trajectory differences also apply. Presentation reuse
+is off in all these runs, so zero reuse hits would not test that feature.
+
+The first profiled ON mid image has an unusual dark/angular rear-car shape
+whose cause is unresolved; it is not used to claim full graphics correctness.
+The repeated ON captures do not reproduce that appearance. A local per-thread
+CPU snapshot was taken after the driving marker ended and is excluded from
+the moving benchmark. The game's displayed lap clock is also not used as an
+independent simulation-speed reference.
+
+Both installations' current states and all sixteen diagnostic properties are
+restored and hash-verified. Original EEPROM ownership is retained; emulator
+processes are stopped and no debugger forward remains. Final verification
+completes at 20:07:35 Madrid on 2026-10-11, before the ten-minute window ends.
+No 100% speed or full-game graphics claim is made.
+
+### Perf30 per-surface native presentation identity
+
+The opt-in native presentation cache previously included the global surface
+list generation. Inserting, shelving or invalidating an unrelated offscreen
+binding could therefore reject reuse even when the selected scanout was
+unchanged. Perf30 replaces that part of the key with a unique 64-bit active
+binding serial assigned in `surface_put`, including recycled images and
+reactivated shelved bindings. Image/view identity, source address, content
+generation, scanout geometry, viewport and swapchain identity still match
+exactly. Pending CPU uploads, PVIDEO, captures and the 250 ms refresh deadline
+still force presentation. Only a successful present commits a cache key.
+The serial counter persists through surface flushes; exhaustion returns zero
+and disables reuse rather than allowing an old identity to reappear.
+
+With both `debug.xemu.vk.present_reuse=1` and the stall profiler enabled,
+`XEMU_PRESENT_REUSE` reports five-second decision totals and overlapping
+rejection reasons: cold cache, invalid serial, upload, video, capture, clock,
+source identity, content and geometry. The classifier used for these counters
+is also the production decision. Profiling-off FPS comparisons do not collect
+these counters. This does not change emulated flips or omit changed images.
+
+Host ASan/UBSan policy checks pass for unchanged scanout during 1024 unrelated
+binding allocations, recycled handles with otherwise identical keys, serial
+exhaustion, clock extremes and all existing redraw guards. Generated Vulkan
+copy/depth fixtures also pass with synchronization validation on llvmpipe.
+The policy fixture does not exercise native swapchain presentation or establish
+an FPS gain. The new cache policy still defaults off. A fresh moving device
+comparison and graphics review are required before accepting it.
+
+The local perf30 APK is version 59 / `1.2.9-pgr2-perf30`, package `.dev.local`,
+SHA-256 `4c4ed1a28cbd5a8ea1ff80c85504acd5755e00f0c340eceb6e13f25c5863b879`.
+Local compilation, v2 signature, certificate, manifest and actual arm64
+diagnostic-string checks pass. The policy fixture also cross-compiles for
+arm64. The previous phone window has ended; no perf30 device run or FPS gain
+is claimed yet. CI/CD remains disabled and private game data stays local.

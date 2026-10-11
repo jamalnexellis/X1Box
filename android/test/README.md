@@ -49,3 +49,25 @@ For Android, build the existing `test-cubemap-copy-vk` native target with the
 NDK and pass the two generated SPIR-V files as arguments to that binary.
 Synchronization validation requires a validation layer on the executing
 device; generated-pixel checks can also run without that layer.
+
+# Native presentation reuse policy
+
+The CPU fixture checks the shared presentation decision with no Vulkan device:
+
+```sh
+cc -I . -UNDEBUG -Wall -Wextra -Werror -fsanitize=address,undefined \
+  android/test/cpp/test-present-reuse.c -o "$task_dir/present-check"
+"$task_dir/present-check"
+```
+
+It checks offscreen binding churn, recycled Vulkan handles with a fresh binding
+identity, counter exhaustion, clock extremes, pending uploads, video, captures,
+changed content/geometry and the bounded refresh deadline. The Android native
+target is `test-present-reuse`. This fixture checks policy; it does not exercise
+an actual swapchain, measure FPS or establish full-game graphics correctness.
+
+In the emulator, the opt-in `debug.xemu.vk.present_reuse=1` must be set before
+launch. With `debug.xemu.vk.stall_profile=1`, `XEMU_PRESENT_REUSE` logs totals
+over approximately five seconds. Rejection-reason counts can overlap and must
+not be summed as a frame budget. Use separate profiling-off driving runs to
+measure FPS and compare reviewed images before accepting a performance change.

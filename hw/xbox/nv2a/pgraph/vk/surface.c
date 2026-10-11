@@ -1696,6 +1696,10 @@ static void surface_put(NV2AState *d, SurfaceBinding *surface)
         g_hash_table_insert(surface_addr_map,
                             (gpointer)(uintptr_t)surface->vram_addr, surface);
     }
+    /* Offscreen list churn must not invalidate an unchanged scanout. A fresh
+     * per-binding identity still rejects recycled/migrated Vulkan handles. */
+    surface->present_serial =
+        vk_present_next_surface_serial(&r->last_present_surface_serial);
     QTAILQ_INSERT_HEAD(&r->surfaces, surface, entry);
     r->surface_list_gen++;
 }
@@ -3152,6 +3156,7 @@ void pgraph_vk_init_surfaces(PGRAPHState *pg)
     r->surface_addr_map = g_hash_table_new(g_direct_hash, g_direct_equal);
     r->surfaces_finalizing = false;
     r->surface_list_gen = 0;
+    r->last_present_surface_serial = 0;
 
     r->downloads_pending = false;
     qemu_event_init(&r->downloads_complete, false);
