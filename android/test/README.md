@@ -76,3 +76,39 @@ not be summed as a frame budget. Use separate profiling-off driving runs to
 measure FPS and compare reviewed images before accepting a performance change.
 The first eight profiled native present results are also logged as
 `XEMU_PRESENT_RESULT` for checking the driver's actual return status.
+
+# Per-slot vertex RAM propagation
+
+The generated CPU fixture reproduces the former three-slot hand-off defect:
+copying only the current slot's new range misses changes from an earlier slot.
+The shared replacement tracks pending pages separately for each destination.
+Both bounding-range and sparse-run copies are checked against an independent
+fully updated byte oracle across 12000 rotations with one, two and three slots,
+idle turns, overlapping writes, distant pages and a partial final page:
+
+```sh
+cc -D_GNU_SOURCE -I . -UNDEBUG -Wall -Wextra -Werror \
+  -fsanitize=address,undefined android/test/cpp/test-vertex-propagation.c \
+  -o "$task_dir/vertex-propagation-check"
+"$task_dir/vertex-propagation-check"
+```
+
+The Android native target is `test-vertex-propagation`. The existing Vulkan
+copy fixture additionally checks 24 generated GPU readback versions for each
+slot count and each copy mode, waiting for the destination's prior readers
+before updating it. Prior readbacks must retain their earlier bytes. These
+transfer reads test byte preservation and ordering, not full vertex fetch or
+game rendering. Host validation layers and generated fixtures do not establish
+device compatibility or an FPS gain.
+
+The emulator always accumulates changes per destination. Its conservative
+default copies the bounding range of that destination's pending changes;
+`debug.xemu.vk.vertex_pages=1` opts into coalesced changed-page copies before
+launch. GPU fence waits and host-to-vertex barriers remain in place. A work
+flush must retain pending mirror changes. Equal-data upload skips perform no
+host write and add no pending changes.
+
+With `debug.xemu.vk.stall_profile=1`, `XEMU_VERTEX_PROPAGATE` reports roughly
+five-second totals for rotations, copied bytes, the equivalent bounding-range
+bytes, copy runs and host copy time. Compare separate profiling-off moving
+races for FPS; fewer copied bytes alone do not establish faster emulation.

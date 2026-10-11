@@ -123,15 +123,112 @@ void pgraph_vk_update_vertex_ram_buffer(PGRAPHState *pg, hwaddr offset,
     if (end > fs->vertex_ram_flush_max) {
         fs->vertex_ram_flush_max = end;
     }
-    if (offset < fs->vertex_ram_propagate_min) {
-        fs->vertex_ram_propagate_min = offset;
-    }
-    if (end > fs->vertex_ram_propagate_max) {
-        fs->vertex_ram_propagate_max = end;
-    }
+    pgraph_vk_mark_vertex_ram_dirty(r, offset, size);
 
     bitmap_set(get_uploaded_bitmap(r), start_bit, nbits);
     bitmap_set(r->cb_vertex_pages, start_bit, nbits);
+}
+
+void pgraph_vk_mark_vertex_ram_dirty(PGRAPHVkState *r, size_t offset, size_t size)
+{
+    /* A destination may miss more than one intervening slot. Keep its own
+     * accumulated changes until it is fenced and refreshed, even across a
+     * flush of GPU work. Equal-data skips perform no write and do not mark. */
+    for (int i = 0; i < NUM_SUBMIT_FRAMES; i++) {
+        VkVertexPending *pending = &r->frame_staging[i].vertex_ram_pending;
+        if (i != r->current_frame && pending->pages) {
+            bool marked = vk_vertex_pending_mark(pending, offset, size);
+            assert(marked);
+            (void)marked;
+        }
+    }
+}
+
+static bool vertex_pages_enabled(void)
+{
+#ifdef __ANDROID__
+    static int enabled = -1;
+    if (enabled < 0) {
+        char prop[PROP_VALUE_MAX] = {0};
+        __system_property_get("debug.xemu.vk.vertex_pages", prop);
+        enabled = strcmp(prop, "1") == 0;
+        __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                            "vertex page propagation experiment=%d", enabled);
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+void pgraph_vk_propagate_vertex_ram(PGRAPHVkState *r, int next_frame)
+{
+    FrameStagingState *current = &r->frame_staging[r->current_frame];
+    FrameStagingState *next = &r->frame_staging[next_frame];
+    /* draw.c has retired the destination's GPU readers. Reading the current
+     * mirror is safe while its GPU readers are in flight; it is host-written. */
+    assert(!qatomic_read(&r->frame_submitted[next_frame]));
+    assert(current->vertex_ram_initialized);
+    assert(current->vertex_ram.buffer_size == next->vertex_ram.buffer_size);
+    if (current != next) {
+        memcpy(next->uploaded_bitmap, current->uploaded_bitmap,
+               BITS_TO_LONGS(r->bitmap_size) * sizeof(unsigned long));
+    }
+    next->vertex_ram_flush_min = VK_WHOLE_SIZE;
+    next->vertex_ram_flush_max = 0;
+
+    bool sparse = vertex_pages_enabled();
+    if (!next->vertex_ram_initialized) {
+        bool marked = vk_vertex_pending_mark(&next->vertex_ram_pending, 0,
+                                             next->vertex_ram.buffer_size);
+        assert(marked);
+        (void)marked;
+        sparse = false; /* First use needs the entire mirror. */
+    }
+    int64_t copy_start = nv2a_stall_start();
+    VkVertexPropagation copy;
+    bool copied = vk_vertex_pending_copy(&next->vertex_ram_pending,
+        next->vertex_ram.mapped, current->vertex_ram.mapped, sparse, &copy);
+    assert(copied);
+    (void)copied;
+    next->vertex_ram_initialized = true;
+    if (copy.copied_bytes) {
+        next->vertex_ram_flush_min = copy.first_byte;
+        next->vertex_ram_flush_max = copy.end_byte;
+    }
+#ifdef __ANDROID__
+    if (copy_start) {
+        int64_t now = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+        if (!r->vertex_propagation_diagnostic.rotations ||
+            now < r->vertex_propagation_diagnostic.started_us) {
+            r->vertex_propagation_diagnostic.started_us = now;
+        }
+        r->vertex_propagation_diagnostic.rotations++;
+        r->vertex_propagation_diagnostic.copied_bytes += copy.copied_bytes;
+        r->vertex_propagation_diagnostic.bounding_bytes += copy.bounding_bytes;
+        r->vertex_propagation_diagnostic.runs += copy.runs;
+        r->vertex_propagation_diagnostic.copy_us +=
+            now >= copy_start ? (uint64_t)now - (uint64_t)copy_start : 0;
+        uint64_t elapsed = (uint64_t)now -
+            (uint64_t)r->vertex_propagation_diagnostic.started_us;
+        if (elapsed >= 5000000) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+                "XEMU_VERTEX_PROPAGATE us=%" PRIu64 " sparse=%d rotations=%" PRIu64
+                " copied_bytes=%" PRIu64 " bounding_bytes=%" PRIu64
+                " runs=%" PRIu64 " copy_us=%" PRIu64,
+                elapsed, vertex_pages_enabled(),
+                r->vertex_propagation_diagnostic.rotations,
+                r->vertex_propagation_diagnostic.copied_bytes,
+                r->vertex_propagation_diagnostic.bounding_bytes,
+                r->vertex_propagation_diagnostic.runs,
+                r->vertex_propagation_diagnostic.copy_us);
+            memset(&r->vertex_propagation_diagnostic, 0,
+                   sizeof(r->vertex_propagation_diagnostic));
+        }
+    }
+#else
+    (void)copy_start;
+#endif
 }
 
 static void update_memory_buffer(NV2AState *d, hwaddr addr, hwaddr size)

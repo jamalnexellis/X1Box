@@ -236,6 +236,7 @@ static void process_vertex_ram_update(PGRAPHVkState *r, RenderCommand *cmd)
     if (end > fs->vertex_ram_flush_max) {
         fs->vertex_ram_flush_max = end;
     }
+    pgraph_vk_mark_vertex_ram_dirty(r, offset, size);
 
     size_t start_bit = offset / TARGET_PAGE_SIZE;
     size_t end_bit = TARGET_PAGE_ALIGN(offset + size) / TARGET_PAGE_SIZE;

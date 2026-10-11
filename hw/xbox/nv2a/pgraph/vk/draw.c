@@ -2898,41 +2898,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
                 }
             }
 
-            {
-                FrameStagingState *cur_fs =
-                    &r->frame_staging[r->current_frame];
-                FrameStagingState *next_fs =
-                    &r->frame_staging[next_frame];
-
-                unsigned long bitmap_longs =
-                    BITS_TO_LONGS(r->bitmap_size);
-                memcpy(next_fs->uploaded_bitmap,
-                       cur_fs->uploaded_bitmap,
-                       bitmap_longs * sizeof(unsigned long));
-
-                next_fs->vertex_ram_flush_min = VK_WHOLE_SIZE;
-                next_fs->vertex_ram_flush_max = 0;
-
-                if (!next_fs->vertex_ram_initialized) {
-                    size_t total = cur_fs->vertex_ram.buffer_size;
-                    memcpy(next_fs->vertex_ram.mapped,
-                           cur_fs->vertex_ram.mapped, total);
-                    next_fs->vertex_ram_flush_min = 0;
-                    next_fs->vertex_ram_flush_max = total;
-                    next_fs->vertex_ram_initialized = true;
-                } else if (cur_fs->vertex_ram_propagate_min <
-                           cur_fs->vertex_ram_propagate_max) {
-                    size_t off = cur_fs->vertex_ram_propagate_min;
-                    size_t len = cur_fs->vertex_ram_propagate_max - off;
-                    memcpy(next_fs->vertex_ram.mapped + off,
-                           cur_fs->vertex_ram.mapped + off, len);
-                    next_fs->vertex_ram_flush_min = off;
-                    next_fs->vertex_ram_flush_max = off + len;
-                }
-
-                cur_fs->vertex_ram_propagate_min = VK_WHOLE_SIZE;
-                cur_fs->vertex_ram_propagate_max = 0;
-            }
+            pgraph_vk_propagate_vertex_ram(r, next_frame);
 
             r->current_frame = next_frame;
             r->command_buffer = r->command_buffers[next_frame * 2];

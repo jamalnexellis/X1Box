@@ -2007,3 +2007,52 @@ SHA-256 `2432ac4ba8f5335c9b2a5b994563b28bb98a9762cb573db793f6f7656f825ea2`.
 Local compilation, v2 signature/certificate, manifest and actual arm64
 diagnostic-string verification pass. Builds and tests remain local, without
 Judge or CI/CD dispatch, and no private game data is uploaded.
+
+### Perf32: preserve vertex mirror history and avoid clean-page copies
+
+Source inspection after perf31 finds a generic three-slot mirror hand-off
+defect. The old rotation copies only the current slot's new bounding range
+and clears that range. An initialized third slot can therefore miss a change
+made two turns earlier, while receiving an uploaded bitmap that assumes the
+data is current. A generated isolated history reproduces that stale byte;
+this does not establish that it caused a particular PGR2 artifact or stall.
+
+Perf32 accumulates pending changes separately for every allocated destination
+mirror, marking both host-upload entry points. Rotation still waits for the
+destination's GPU readers before copying from the current mirror. First use
+copies the whole allocation, one-slot rotations avoid self-copy, and flushing
+GPU work retains pending mirror history. Equal-data upload skips do not mark
+changes. Allocation-failure cleanup and renderer teardown free the tracking.
+
+Both copy modes use the corrected history. The default copies the pending
+destination's bounding range; the opt-in `debug.xemu.vk.vertex_pages=1` copies
+only coalesced pending page runs. The existing fence waits, mapped-memory
+flush and host-to-vertex barrier stay in place. Tracking uses one byte per
+guest page, or 16 KiB per 64 MiB mirror. With profiling enabled, independent
+five-second totals report copy bytes, equivalent bounding bytes, runs and
+host copy time; ordinary profiling-off runs collect no such totals.
+
+Local ASan/UBSan checks pass 12000 rotations against a fully updated byte
+oracle for one, two and three slots, including idle turns, overlaps, page
+boundaries, partial tails and rejected out-of-bounds requests. A synthetic
+64 MiB allocation with only its first and last pages changed copies 8192 bytes
+instead of a 67108864-byte bounding range. This is a generated workload,
+not a measured reduction in PGR2.
+
+The extended Vulkan fixture passes 24 queued readback versions per slot count
+and copy mode on host llvmpipe with validation enabled. Earlier snapshots
+retain their exact bytes across fenced mirror recycling. Existing generated
+color, cube and depth pixel/synchronization fixtures also pass. Transfer
+readbacks do not test full vertex fetch, device graphics or game speed.
+
+At this stage no perf32 phone measurement has run. The previous phone session
+remains restored and released. A fresh moving-race comparison at 3x with
+profiling off is required before accepting any FPS gain; sustained original
+speed and full-game graphics correctness remain unverified.
+
+Perf32 builds locally as version 61 / `1.2.9-pgr2-perf32` in the separate
+`.dev.local` package. The v2 signature, local certificate, APK manifest and
+actual arm64 experiment/diagnostic strings pass verification. APK SHA-256:
+`6d15cb32eadc3966da694f8a32d7924d0bbc286054ead748ebe787fbc0c7e1a6`.
+The policy and extended Vulkan fixtures also cross-compile for arm64. No
+Judge or CI/CD pipeline is used, and no private game data is uploaded.

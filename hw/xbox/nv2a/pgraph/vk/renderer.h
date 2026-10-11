@@ -23,6 +23,7 @@
 #include "qemu/osdep.h"
 #include "qemu/thread.h"
 #include "present-reuse.h"
+#include "vertex-propagation.h"
 #include "cubemap-copy.h"
 #include "qemu/queue.h"
 #include "qemu/lru.h"
@@ -283,8 +284,7 @@ typedef struct FrameStagingState {
     StorageBuffer vertex_ram;
     VkDeviceSize vertex_ram_flush_min;
     VkDeviceSize vertex_ram_flush_max;
-    VkDeviceSize vertex_ram_propagate_min;
-    VkDeviceSize vertex_ram_propagate_max;
+    VkVertexPending vertex_ram_pending;
     bool vertex_ram_initialized;
     unsigned long *uploaded_bitmap;
 } FrameStagingState;
@@ -1254,6 +1254,10 @@ typedef struct PGRAPHVkState {
     ReorderWindow reorder_window;
 
     FrameStagingState frame_staging[NUM_SUBMIT_FRAMES];
+    struct {
+        int64_t started_us;
+        uint64_t rotations, copied_bytes, bounding_bytes, runs, copy_us;
+    } vertex_propagation_diagnostic;
 
     MemorySyncRequirement vertex_ram_buffer_syncs[NV2A_VERTEXSHADER_ATTRIBUTES];
     size_t num_vertex_ram_buffer_syncs;
@@ -1619,6 +1623,8 @@ void pgraph_vk_bind_vertex_attributes(NV2AState *d, unsigned int min_element,
                                       unsigned int provoking_element);
 void pgraph_vk_bind_vertex_attributes_inline(NV2AState *d);
 void pgraph_vk_init_vertex_formats(PGRAPHVkState *r);
+void pgraph_vk_mark_vertex_ram_dirty(PGRAPHVkState *r, size_t offset, size_t size);
+void pgraph_vk_propagate_vertex_ram(PGRAPHVkState *r, int next_frame);
 void pgraph_vk_update_vertex_ram_buffer(PGRAPHState *pg, hwaddr offset, void *data,
                                     VkDeviceSize size);
 VkDeviceSize pgraph_vk_update_index_buffer(PGRAPHState *pg, void *data,

@@ -674,9 +674,15 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
         };
         fs->vertex_ram_flush_min = VK_WHOLE_SIZE;
         fs->vertex_ram_flush_max = 0;
-        fs->vertex_ram_propagate_min = VK_WHOLE_SIZE;
-        fs->vertex_ram_propagate_max = 0;
         fs->vertex_ram_initialized = false;
+        size_t pending_pages = fs->vertex_ram.buffer_size / TARGET_PAGE_SIZE +
+            (fs->vertex_ram.buffer_size % TARGET_PAGE_SIZE != 0);
+        uint8_t *pending = g_malloc0(pending_pages);
+        bool pending_initialized = vk_vertex_pending_init(
+            &fs->vertex_ram_pending, pending, fs->vertex_ram.buffer_size,
+            TARGET_PAGE_SIZE);
+        assert(pending_initialized);
+        (void)pending_initialized;
 
         char name[64];
         StorageBuffer *bufs[] = {
@@ -736,6 +742,8 @@ fail:
         }
         g_free(fs->uploaded_bitmap);
         fs->uploaded_bitmap = NULL;
+        g_free(fs->vertex_ram_pending.pages);
+        fs->vertex_ram_pending = (VkVertexPending){0};
     }
     for (int i = 0; i < BUFFER_COUNT; i++) {
         if (r->storage_buffers[i].mapped) {
@@ -769,6 +777,8 @@ void pgraph_vk_finalize_buffers(NV2AState *d)
         }
         g_free(fs->uploaded_bitmap);
         fs->uploaded_bitmap = NULL;
+        g_free(fs->vertex_ram_pending.pages);
+        fs->vertex_ram_pending = (VkVertexPending){0};
     }
 
     for (int i = 0; i < BUFFER_COUNT; i++) {
