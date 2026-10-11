@@ -1415,11 +1415,24 @@ without guest addresses, image handles or pixels. This makes remaining failed
 eligibility observable instead of inferring it from non-engagement. Policy
 fixtures cover linear border flags, retained non-linear rejection and combined
 reason bits. GPU barriers and copy helper are unchanged. Defaults remain off
-and two slots; host/Android compilation and actual-device checks are pending.
+and two slots. Host checks and Android compilation pass; actual-device checks
+remain pending.
+
+The final perf24 APK is built from
+`a4682b4ce2ffb912c6a31fd0a84cddb86f5cb2a6` by successful
+[CI run 38096644506](https://github.com/jamalnexellis/X1Box/actions/runs/38096644506).
+It is 35,688,833 bytes, with SHA-256
+`00ee7fa0b5db01578efa649b7be1f5328e0f1acee20c6c4208f4f594927e6eba`.
+Manifest inspection confirms development package version 53 /
+`1.2.9-pgr2-perf24`; native inspection confirms the 43-phase/fence coverage,
+copy/rejection/bypass diagnostics and matching development certificate
+identity. Certificate inspection does not verify the APK payload signature;
+Android update installation remains part of the device test. The standalone
+Android fixture source is unchanged from its successful build at `ab84467`.
 
 The next planned comparison should distinguish queue depth and copy rather
 than assuming a two-slot texture-reuse wait: perf23 has no such wait. A guarded
-nine-minute test is being prepared to diagnose the three-slot queued candidate
+nine-minute test is prepared to diagnose the three-slot queued candidate
 and compare all four fixed-scene profile-off combinations, twice each, in
 symmetric order: 2/off, 3/off, 2/on, 3/on, 3/on, 2/on, 3/off, 2/off.
 Cube copy stays on. The on modes require actual target-format copy engagement;
