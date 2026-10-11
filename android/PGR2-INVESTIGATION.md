@@ -1439,3 +1439,58 @@ Cube copy stays on. The on modes require actual target-format copy engagement;
 the three-slot on mode additionally requires the cached host-wait bypass.
 All images/runtime checks and exact current-state restoration remain required.
 This is preparation, not a new result or accepted FPS improvement.
+
+The subsequent perf24 Adreno 830 run installs successfully, passes the generated
+policy/cube/native/mixed-format pixel fixtures and engages both the exact
+BGRA8-to-RGBA8 1280x480 queued copy and the cached host-wait bypass. Device
+synchronization validation is not enabled. Unsupported R8/depth formats keep
+their ordinary fallback. The initial profile trace has 271 complete flips
+(median 51.728 ms, p95 73.568 ms, maximum 87.988 ms); movement has 328
+(59.544, 89.645 and 121.571 ms). Texture-reuse waits average 0.139/0.154 ms
+per initial/moving flip, and finish waits 0.739/0.362 ms. Readback routes and
+shader compilation remain zero. Moving texture decoding peaks at 1.294 ms;
+pipeline creation still peaks at 27.641 ms. Host display-present scopes average
+20.332/22.364 ms per flip; these overlapping scopes are not GPU execution time.
+
+All eight profile-off captures complete in the planned symmetric order, each
+with three full five-second post-warmup intervals. The pooled figures are:
+
+| Slots / queued copy | Flips / milliseconds | FPS | Two run FPS | Run range |
+| --- | --- | --- | --- | --- |
+| 2 / off | 449 / 30,199 | 14.868 | 14.951 / 14.785 | 1.118% |
+| 3 / off | 414 / 30,105 | 13.752 | 13.757 / 13.747 | 0.073% |
+| 2 / on | 495 / 30,196 | 16.393 | 14.959 / 17.829 | 17.506% |
+| 3 / on | 504 / 30,263 | 16.654 | 17.652 / 15.657 | 11.977% |
+
+Copy-on versus off at three slots is +21.104%; both on runs exceed both off
+runs. Compared with two/off, the combined change is +12.012%, similar to the
+three/on run spread. At two slots, the +10.256% pooled difference is smaller
+than its 17.506% spread. Three slots without copy remain slower (-7.507%).
+Cube copy is constant and experimental, so these are not stock comparisons.
+AI traffic, cache history, clocks and short real-time windows remain
+uncontrolled. The high variation requires further investigation; no general
+FPS claim or default promotion follows from these figures.
+
+All nineteen images are reviewed with coherent buildings/road/HUD, stationary
+neutral controls and limited A/RT movement to 14 km/h. All runtime modes and
+controller checks pass, with thermal status zero throughout; this does not
+verify every control, full-game compatibility or fixed clocks. The then-current
+archive/HDD/EEPROM, all eleven originally empty properties and app ownership
+are independently verified after restoration. The emulator is stopped and the
+phone is released before the original nine-minute deadline.
+
+At the user's request, the fork's Android APK, Android fixture and CI workflows
+are manually disabled. Subsequent builds and checks must run locally, with
+Judge used for independent review. Judge preflight finds only Codex; its
+single-author-engine guard leaves native review pending a different authorized
+model or an available Claude installation. This is not a Judge approval.
+
+A local Docker Linux toolchain is subsequently prepared with Java 25,
+Android platform 36/build-tools 36.1.0/NDK 30.0.15729638-beta2/CMake 3.22.1
+and Rust 1.99.0. Without network access and with repository input mounted
+read-only, local native checks pass: sanitizer-enabled media/uniform/presentation/
+submission/copy-policy tests, production copy pixel fixtures with llvmpipe
+synchronization validation, and texture-upload fixture compilation. This
+checks the replacement test environment; a full local APK build has not yet
+been run, and the installed development APK's signing key is not present
+locally. The installed app and its data are retained.
