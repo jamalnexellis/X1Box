@@ -7,6 +7,7 @@
 #include <string.h>
 #include "hw/xbox/nv2a/pgraph/vk/cubemap-copy-vk.h"
 #include "hw/xbox/nv2a/pgraph/vk/surface-copy-vk.h"
+#include "hw/xbox/nv2a/pgraph/vk/depth-copy-vk.h"
 
 #define CHECK(call) do { VkResult result_ = (call); \
     if (result_ != VK_SUCCESS) { \
@@ -72,7 +73,8 @@ static VkDeviceMemory make_image(uint32_t width, uint32_t height,
         .extent = { width, height, 1 }, .mipLevels = 1, .arrayLayers = layers,
         .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
         .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                 VK_IMAGE_USAGE_SAMPLED_BIT | (format == VK_FORMAT_D16_UNORM ?
+                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT),
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
     CHECK(vkCreateImage(device, &info, NULL, image));
@@ -89,8 +91,8 @@ static VkDeviceMemory make_image(uint32_t width, uint32_t height,
     return memory;
 }
 
-static void transition(VkCommandBuffer cmd, VkImage image, uint32_t layers,
-                       VkImageLayout old_layout, VkImageLayout new_layout)
+static void transition_aspect(VkCommandBuffer cmd, VkImage image, uint32_t layers,
+    VkImageLayout old_layout, VkImageLayout new_layout, VkImageAspectFlags aspect)
 {
     VkImageMemoryBarrier barrier = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -101,10 +103,16 @@ static void transition(VkCommandBuffer cmd, VkImage image, uint32_t layers,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = image,
-        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers },
+        .subresourceRange = { aspect, 0, 1, 0, layers },
     };
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+}
+
+static void transition(VkCommandBuffer cmd, VkImage image, uint32_t layers,
+                       VkImageLayout old_layout, VkImageLayout new_layout)
+{
+    transition_aspect(cmd, image, layers, old_layout, new_layout, VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 static void test_cube(VkQueue queue, VkCommandPool pool, uint32_t width)
@@ -236,12 +244,16 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
                          uint32_t height, VkFormat source_format,
                          VkFormat destination_format, unsigned bytes_per_pixel)
 {
-    assert(vk_surface_copy_formats_compatible(source_format, destination_format));
+    bool depth = source_format == VK_FORMAT_D16_UNORM;
+    assert(depth ? destination_format == VK_FORMAT_R16_UNORM :
+           vk_surface_copy_formats_compatible(source_format, destination_format));
     const unsigned passes = 3;
     size_t bytes = (size_t)width * height * bytes_per_pixel;
     VkBuffer input, output;
     VkDeviceMemory input_memory = make_buffer(bytes * passes, &input);
     VkDeviceMemory output_memory = make_buffer(bytes * passes, &output);
+    VkBuffer scratch = VK_NULL_HANDLE;
+    VkDeviceMemory scratch_memory = depth ? make_buffer(bytes, &scratch) : VK_NULL_HANDLE;
     unsigned char *input_data, *output_data;
     CHECK(vkMapMemory(device, input_memory, 0, VK_WHOLE_SIZE, 0, (void **)&input_data));
     CHECK(vkMapMemory(device, output_memory, 0, VK_WHOLE_SIZE, 0, (void **)&output_data));
@@ -261,6 +273,10 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
     CHECK(vkAllocateCommandBuffers(device, &alloc, cmds));
     VkImageLayout layouts[3] = { VK_IMAGE_LAYOUT_GENERAL,
         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    if (depth) {
+        layouts[1] = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        layouts[2] = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    }
     for (unsigned pass = 0; pass < passes; pass++) {
         VkCommandBuffer cmd = cmds[pass];
         VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
@@ -274,18 +290,26 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
         };
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
             0, 0, NULL, 1, &host, 0, NULL);
-        transition(cmd, source, 1, pass ? layouts[pass - 1] : VK_IMAGE_LAYOUT_UNDEFINED,
-                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        transition_aspect(cmd, source, 1, pass ? layouts[pass - 1] : VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
         VkBufferImageCopy region = {
             .bufferOffset = bytes * pass,
-            .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+            .imageSubresource = { depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
             .imageExtent = { width, height, 1 },
         };
         vkCmdCopyBufferToImage(cmd, input, source, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-        transition(cmd, source, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layouts[pass]);
-        vk_surface_copy_record(cmd, source, layouts[pass], destination,
-            pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-            width, height);
+        transition_aspect(cmd, source, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            layouts[pass], depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
+        if (depth) {
+            vk_depth_copy_record(cmd, source, layouts[pass], destination,
+                pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                scratch, width, height);
+        } else {
+            vk_surface_copy_record(cmd, source, layouts[pass], destination,
+                pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                width, height);
+        }
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         transition(cmd, destination, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         vkCmdCopyImageToBuffer(cmd, destination, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -318,9 +342,12 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
     vkUnmapMemory(device, input_memory); vkUnmapMemory(device, output_memory);
     vkDestroyBuffer(device, input, NULL); vkDestroyBuffer(device, output, NULL);
     vkFreeMemory(device, input_memory, NULL); vkFreeMemory(device, output_memory, NULL);
+    if (depth) {
+        vkDestroyBuffer(device, scratch, NULL); vkFreeMemory(device, scratch_memory, NULL);
+    }
     printf("PASS %s color 2D source_fmt=%d destination_fmt=%d %ux%u, "
            "three queued versions and prior reads\n",
-           source_format == destination_format ? "native" : "byte-preserving",
+           depth ? "D16/R16 scratch" : (source_format == destination_format ? "native" : "byte-preserving"),
            source_format, destination_format, width, height);
 }
 
@@ -404,6 +431,12 @@ int main(void)
     test_cube(queue, pool, 256);
     test_cube(queue, pool, 512); /* 2x reflections */
     test_cube(queue, pool, 768); /* 3x, non-power-of-two host allocation */
+    test_surface(queue, pool, 16, 16, VK_FORMAT_D16_UNORM, VK_FORMAT_R16_UNORM, 2);
+    test_surface(queue, pool, 1024, 1024, VK_FORMAT_D16_UNORM, VK_FORMAT_R16_UNORM, 2);
+    test_surface(queue, pool, 3072, 3072, VK_FORMAT_D16_UNORM, VK_FORMAT_R16_UNORM, 2);
+    test_surface(queue, pool, 256, 256, VK_FORMAT_R8_UNORM, VK_FORMAT_R8_UNORM, 1);
+    test_surface(queue, pool, 768, 768, VK_FORMAT_R8_UNORM, VK_FORMAT_R8_UNORM, 1);
+    assert(!vk_surface_copy_formats_compatible(VK_FORMAT_D16_UNORM, VK_FORMAT_R16_UNORM));
     VkFormat formats[] = { VK_FORMAT_R5G6B5_UNORM_PACK16,
         VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM };
     for (unsigned i = 0; i < 3; i++) {

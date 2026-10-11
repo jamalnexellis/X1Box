@@ -1654,3 +1654,60 @@ disc; the original package is not replaced. Both app states and all thirteen
 diagnostic properties are restored and hash-checked; EEPROM ownership is
 retained. The phone is released at 16:57:16 Madrid within the ten-minute window.
 CI/CD remains disabled. No private game content is included in the fork.
+
+### Perf27: queued D16 copies and fresh race restarts
+
+The next experiment targets a measured reuse dependency: D16 depth surfaces
+copied into R16 textures. `debug.xemu.vk.depth_copy_queue=1` defaults off and
+only bypasses the host reuse wait for matching, initialized, active 2D images
+with one level/layer, no pending upload/download, and sufficient GPU scratch
+capacity. Native sizes and actual allocated extents must agree; scaled copies
+also require the perf26 opt-in. Depth/stencil conversions keep their ordinary
+fallback. Deferred draws are flushed before eligibility is checked again.
+
+The shared production primitive copies depth image -> scratch buffer -> color
+image. It preserves bits, orders prior destination/scratch users, and restores
+the source layout and destination shader layout. It does not issue an invalid
+depth-to-color image copy or omit queue dependencies. Native R8 color copies
+also join the existing queued-color whitelist under that separate opt-in.
+
+Host ASan/UBSan eligibility checks and Vulkan synchronization validation pass.
+The generated fixtures pass on Adreno 830 as well: D16/R16 copies at 16-square,
+1024-square and 3072-square, plus R8 copies at 256-square and 768-square. Each
+uses three queued versions with prior destination reads and compares output
+pixels exactly. Existing cube and color-copy fixtures also pass. These are
+correctness checks, not performance measurements.
+
+The local build produces version 56 / `1.2.9-pgr2-perf27`, package `.dev.local`,
+APK SHA-256 `2e748e5df396bc899a9c62ae188f4a2988e4d4792910d3b1e137c1be53117b86`.
+APK v2 verification passes with the same local signing certificate. The phone
+logs confirm the new route at 1024x1024 (1x) and 3072x3072 (3x), and the 3x
+scanout source is 1920x1440. This retains the game's 4:3 internal aspect; the
+2340x1080 Android output is a separate measurement.
+
+Tests restore the immutable older Slot 2 and restart the race through the
+game menu, avoiding the stretched geometry seen when loading the newer perf26
+race-start snapshot. The first private script attempt remains paused because
+it failed to execute the restart; that attempt is discarded. After correcting
+the script, both 1x modes and the 3x enabled mode show fresh countdowns,
+advancing lap clocks, the player accelerating and three moving AI rivals.
+Buildings, road and HUD are coherent in the reviewed fresh-race captures.
+This narrows the earlier visual problem to a reproduction involving the new
+snapshot; it does not diagnose its cause or prove full-game graphics correctness.
+
+Profiling is off during the short driving samples. Five complete five-second
+flip intervals inside the input markers average 27.495 FPS for depth-copy ON
+at 1x and 25.992 for OFF. Four complete intervals average 26.647 FPS for ON at
+3x. These are descriptive functional samples, not an accepted sustained gain:
+there is only one ON/OFF pair, automated steering hits barriers, and the 3x
+steering plan differs. The early straight shows moving rivals, but the later
+scene becomes unsuitable for a matched clean-race comparison. Thermal status
+is zero at the captured ends, without implying fixed clocks. An entire clean
+lap, calibrated game-speed measurement and sustained 3x performance remain
+unverified; the experiment stays opt-in.
+
+Both installations' current states and all fourteen diagnostic properties are
+restored. HDD/EEPROM hashes, local app data hashes and original EEPROM ownership
+are verified. The emulators are stopped with no diagnostic forward remaining.
+The phone is released at 17:22:01 Madrid, before the ten-minute window ends.
+All work is local; CI/CD stays disabled and no Judge workflow is used.

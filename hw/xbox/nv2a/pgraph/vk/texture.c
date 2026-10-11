@@ -33,6 +33,8 @@
 #include "cubemap-copy-vk.h"
 #include "surface-copy.h"
 #include "surface-copy-vk.h"
+#include "depth-copy.h"
+#include "depth-copy-vk.h"
 #include "qemu/timer.h"
 
 #ifdef __ANDROID__
@@ -1675,6 +1677,68 @@ static bool scaled_copy_enabled(void)
 #endif
 }
 
+static bool depth_queue_copy_enabled(void)
+{
+#ifdef __ANDROID__
+    static int enabled = -1;
+    if (enabled < 0) {
+        char prop[PROP_VALUE_MAX] = {};
+        enabled = __system_property_get("debug.xemu.vk.depth_copy_queue", prop) > 0 &&
+                  prop[0] == '1';
+        __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                            "depth queued-copy experiment=%d", enabled);
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+static bool can_queue_depth_copy(PGRAPHState *pg, const SurfaceBinding *s,
+                                 const TextureBinding *t)
+{
+#if OPT_SURF_TO_TEX_INLINE
+    if (!depth_queue_copy_enabled()) return false;
+    PGRAPHVkState *r = pg->vk_renderer_state;
+    const TextureShape *shape = &t->key.state;
+    VkDepthCopyPolicy policy = {
+        .width = shape->width, .height = shape->height,
+        .scale = pg->surface_scale_factor, .depth = shape->depth,
+        .dimensions = shape->dimensionality, .levels = shape->levels,
+        .layers = t->image_config.array_layers,
+        .source_width = s->width, .source_height = s->height,
+        .source_image_width = s->image_width, .source_image_height = s->image_height,
+        .destination_width = t->image_config.width,
+        .destination_height = t->image_config.height,
+        .scratch_capacity = r->storage_buffers[BUFFER_COMPUTE_DST].buffer_size,
+        .allow_scaled = scaled_copy_enabled(), .cubemap = shape->cubemap,
+        .border = vk_surface_copy_storage_border(shape->border,
+            kelvin_color_format_info_map[shape->color_format].linear),
+        .active = s->access_cb != NULL,
+        .initialized = s->initialized && s->image_layout != VK_IMAGE_LAYOUT_UNDEFINED,
+        .upload_pending = s->upload_pending, .download_pending = s->download_pending,
+        .native_d16_r16 = !s->color &&
+            s->host_fmt.aspect == VK_IMAGE_ASPECT_DEPTH_BIT &&
+            s->host_fmt.vk_format == VK_FORMAT_D16_UNORM &&
+            s->host_fmt.host_bytes_per_pixel == 2 &&
+            t->image_config.format == VK_FORMAT_R16_UNORM &&
+            texture_format_for_shape(r, *shape, t->key.address).vk_format == VK_FORMAT_R16_UNORM &&
+            t->image_config.image_type == VK_IMAGE_TYPE_2D &&
+            t->image_config.depth == 1 && t->image_config.mip_levels == 1 &&
+            (t->image_config.usage & (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) ==
+                (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT),
+        .distinct_images = s->image && t->image && s->image != t->image,
+    };
+    return vk_depth_copy_eligible(&policy) &&
+        r->storage_buffers[BUFFER_COMPUTE_DST].buffer &&
+        (t->current_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ||
+         t->current_layout == VK_IMAGE_LAYOUT_UNDEFINED);
+#else
+    (void)pg; (void)s; (void)t;
+    return false;
+#endif
+}
+
 static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
                                     const TextureBinding *t)
 {
@@ -1783,12 +1847,10 @@ static void wait_texture_reuse(PGRAPHState *pg, TextureBinding *texture,
 static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
                                     TextureBinding *texture, bool queue_copy)
 {
-    if (!surface->color) {
-        copy_zeta_surface_to_texture(pg, surface, texture);
-        return false;
-    }
-
     PGRAPHVkState *r = pg->vk_renderer_state;
+    if (!surface->color && can_queue_depth_copy(pg, surface, texture)) {
+        queue_copy = true;
+    }
 
     if (r->reorder_window.count > 0) {
         NV2AState *d = container_of(pg, NV2AState, pgraph);
@@ -1798,7 +1860,9 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         NV2AState *d = container_of(pg, NV2AState, pgraph);
         pgraph_vk_flush_draw_queue(d);
     }
-    bool eligible = queue_copy && can_queue_surface_copy(pg, surface, texture);
+    bool eligible = queue_copy && (surface->color ?
+        can_queue_surface_copy(pg, surface, texture) :
+        can_queue_depth_copy(pg, surface, texture));
     if (queue_copy && !eligible &&
         texture->submit_time + r->num_active_frames > r->submit_count) {
         /* Prior draw emission can change surface state. If the strict policy
@@ -1811,17 +1875,31 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         int64_t start = nv2a_stall_start();
         OPT_STAT_INC(nd_copysurf);
         VkCommandBuffer cmd = pgraph_vk_begin_nondraw_commands(pg);
-        vk_surface_copy_record(cmd, surface->image, surface->image_layout,
-            texture->image, texture->current_layout,
-            surface->image_width, surface->image_height);
+        if (surface->color) {
+            vk_surface_copy_record(cmd, surface->image, surface->image_layout,
+                texture->image, texture->current_layout,
+                surface->image_width, surface->image_height);
+        } else {
+            vk_depth_copy_record(cmd, surface->image, surface->image_layout,
+                texture->image, texture->current_layout,
+                r->storage_buffers[BUFFER_COMPUTE_DST].buffer,
+                surface->image_width, surface->image_height);
+        }
         pgraph_vk_end_nondraw_commands(pg, cmd);
         texture->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         texture->draw_time = surface->draw_time;
         nv2a_profile_inc_counter(NV2A_PROF_SURF_TO_TEX);
         nv2a_stall_record(NV2A_STALL_TEXTURE_RECORD, start, 0);
 #ifdef __ANDROID__
-        static bool engaged;
-        if (!engaged) {
+        static bool engaged, depth_engaged;
+        if (!surface->color && !depth_engaged) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                "depth queued-copy path engaged: D16 to R16 scale=%d "
+                "copy_width=%u copy_height=%u", pg->surface_scale_factor,
+                surface->image_width, surface->image_height);
+            depth_engaged = true;
+        }
+        if (surface->color && !engaged) {
             __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
                 "surface queued-copy path engaged: byte-preserving color 2D "
                 "scale=%d copy_width=%u copy_height=%u",
@@ -1833,7 +1911,7 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
             uint32_t width, height;
         } reinterpret_shapes[8];
         static unsigned reinterpret_count;
-        if (surface->host_fmt.vk_format != texture->image_config.format) {
+        if (surface->color && surface->host_fmt.vk_format != texture->image_config.format) {
             bool seen = false;
             for (unsigned i = 0; i < reinterpret_count; i++) {
                 seen |= reinterpret_shapes[i].source == surface->host_fmt.vk_format &&
@@ -1856,6 +1934,10 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         }
 #endif
         return true;
+    }
+    if (!surface->color) {
+        copy_zeta_surface_to_texture(pg, surface, texture);
+        return false;
     }
     TextureShape *state = &texture->key.state;
     VkColorFormatInfo vkf = r->texture_format_map[state->color_format];
@@ -2681,7 +2763,8 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
             if (surface->draw_time != snode->draw_time) {
                 bool can_direct_bind = can_bind_surface_direct(r, surface);
                 bool queue_copy = !can_direct_bind &&
-                                  can_queue_surface_copy(pg, surface, snode);
+                    (can_queue_surface_copy(pg, surface, snode) ||
+                     can_queue_depth_copy(pg, surface, snode));
                 bool cached_inflight =
                     snode->submit_time + r->num_active_frames > r->submit_count;
                 if (!queue_copy &&
