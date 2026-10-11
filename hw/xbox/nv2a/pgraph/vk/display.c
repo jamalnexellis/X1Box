@@ -19,6 +19,7 @@
 
 #include "ui/xemu-settings.h"
 #include "renderer.h"
+#include "present-result.h"
 #include "qemu/error-report.h"
 #include <EGL/egl.h>
 #include <math.h>
@@ -2456,7 +2457,17 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
         int64_t present_start = nv2a_stall_start();
         VkResult present_result = vkQueuePresentKHR(r->queue, &present_info);
         nv2a_stall_record(NV2A_STALL_DISPLAY_PRESENT, present_start, 0);
-        present_success = present_result == VK_SUCCESS;
+        present_success = vk_present_result_is_presented(present_result);
+        if (nv2a_stall_profile_enabled && disp->reuse_identical_present) {
+            static unsigned int result_logs;
+            if (result_logs < 8) {
+                __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+                    "XEMU_PRESENT_RESULT result=%d accepted=%d candidate_serial=%"
+                    PRIu64, present_result, present_success,
+                    disp->reuse_candidate.surface_serial);
+                result_logs++;
+            }
+        }
         if (present_result == VK_ERROR_OUT_OF_DATE_KHR) {
             __android_log_print(ANDROID_LOG_WARN, "hakuX-vk",
                                 "present: swapchain became out of date; "

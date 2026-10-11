@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include "hw/xbox/nv2a/pgraph/vk/present-reuse.h"
+#include "hw/xbox/nv2a/pgraph/vk/present-result.h"
 
 int main(void)
 {
@@ -128,6 +129,24 @@ int main(void)
                        VK_PRESENT_REUSE_BIT(VK_PRESENT_REUSE_CAPTURE) |
                        VK_PRESENT_REUSE_BIT(VK_PRESENT_REUSE_CONTENT) |
                        VK_PRESENT_REUSE_BIT(VK_PRESENT_REUSE_GEOMETRY)));
+    /* Both WSI success codes commit a presented image. Other positive statuses
+     * and every failure must discard the cached image, including out of date. */
+    const VkResult results[] = {
+        VK_SUCCESS, VK_SUBOPTIMAL_KHR, VK_NOT_READY, VK_TIMEOUT, VK_EVENT_SET,
+        VK_EVENT_RESET, VK_INCOMPLETE, VK_ERROR_OUT_OF_HOST_MEMORY,
+        VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_DEVICE_LOST,
+        VK_ERROR_SURFACE_LOST_KHR, VK_ERROR_OUT_OF_DATE_KHR,
+        VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT,
+    };
+    for (unsigned int i = 0; i < sizeof(results) / sizeof(results[0]); i++) {
+        bool accepted = i < 2;
+        assert(vk_present_result_is_presented(results[i]) == accepted);
+        vk_present_reuse_commit(&cache, &key, 5000000, true);
+        vk_present_reuse_commit(&cache, &key, 5000001,
+                                vk_present_result_is_presented(results[i]));
+        assert(vk_present_can_reuse(&cache, &key, 5000002,
+                                   false, false, false) == accepted);
+    }
     puts("Native presentation reuse policy checks passed");
     return 0;
 }

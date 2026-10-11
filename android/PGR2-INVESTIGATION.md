@@ -1937,5 +1937,73 @@ The local perf30 APK is version 59 / `1.2.9-pgr2-perf30`, package `.dev.local`,
 SHA-256 `4c4ed1a28cbd5a8ea1ff80c85504acd5755e00f0c340eceb6e13f25c5863b879`.
 Local compilation, v2 signature, certificate, manifest and actual arm64
 diagnostic-string checks pass. The policy fixture also cross-compiles for
-arm64. The previous phone window has ended; no perf30 device run or FPS gain
-is claimed yet. CI/CD remains disabled and private game data stays local.
+arm64. At this build stage the previous phone window had ended and no perf30
+device run or FPS gain was claimed. The subsequent device results follow.
+CI/CD remains disabled and private game data stays local.
+
+### Perf30/31 device diagnosis: accept completed suboptimal presentations
+
+A fresh ten-minute window installs perf30 in the separate test package and
+runs its native policy fixture successfully on the phone. A profiled 3x
+moving start reveals that all 1120 decisions in four complete five-second
+intervals wholly within movement reject reuse for a cold cache; none records
+an invalid binding serial, CPU upload, video or capture. The run contains 664
+complete emulated-frame diagnostic records and 1411 native presentations.
+An additional profiling-off OFF run is captured, but a complete paired FPS
+comparison is not obtained in this window.
+
+The cache only accepted `VK_SUCCESS` from `vkQueuePresentKHR`. Khronos also
+classifies `VK_SUBOPTIMAL_KHR` as a successful presentation, with the same
+meaning as for acquisition; the swapchain remains usable. See the primary
+[Vulkan reference](https://docs.vulkan.org/refpages/latest/refpages/source/vkQueuePresentKHR.html).
+Perf31 uses a shared explicit predicate accepting those two results. It
+continues to discard all errors and other positive statuses, retaining the
+existing out-of-date recreation path and bounded 250 ms refresh. It does not
+treat every nonnegative result as success.
+
+Host ASan/UBSan and the arm64 policy fixture on the phone pass both successful
+results and the tested not-ready, timeout, event, incomplete, memory, device,
+surface, out-of-date and fullscreen-loss results. The result predicate is the
+one called by the presenter before committing its cache. The generated Vulkan
+copy paths are unchanged from the fixtures already checked above.
+
+After local build/signature/manifest/native checks, perf31 is installed in
+the same separate test package while preserving the current session backup.
+Its first eight profiled native presentation results are actually
+`VK_SUBOPTIMAL_KHR` (1000001003), accepted with a nonzero candidate serial.
+Four complete five-second decision intervals inside a new 3x moving start
+then contain 1094 checks: 605 unchanged-image reuses (55.3%), no cold-cache
+rejections, and 489 changed-content redraws. No source, geometry, upload,
+video, capture, clock or invalid-serial rejection occurs in those four windows.
+This establishes that the corrected cache is exercised, not an FPS gain.
+
+Across the separately selected complete emulated-frame records, perf31 has
+623 frames, 767 reuse events and 623 native presentations. Presentation host
+wall total changes from 1622.056 ms in perf30's diagnostic run to 192.395 ms
+in perf31's. GPU-fence wall totals are 784.910/1708.723 ms; median frame
+intervals are 35.453/36.737 ms. These profiled runs have different trajectories
+and workloads, nested/cross-thread timings and profiling overhead. Reduced
+presentation work does not establish faster simulation or higher sustained
+FPS. The 20-second decision windows and approximately 25-second frame-record
+intervals are distinct selections; their counters must not be conflated.
+
+Reviewed perf31 mid/end images show coherent car, road, buildings and HUD.
+The player and all three AI rivals are visible moving in the mid capture;
+the player reaches the next straight and the rivals advance on the minimap.
+End thermal status is zero and no captured fatal exception or device loss
+is found. This is a short functional check with a steering/contact limitation,
+not a full-lap compatibility result. Internal scanout remains 1920x1440 and
+the output 2340x1080. Presentation reuse remains off by default.
+
+A further profiling-off perf31 run is rejected by the private remaining-time
+guard before changing any property or starting input. Both app states and
+all sixteen properties are restored and hash-verified at 20:30:51 Madrid
+on 2026-10-11, before the fresh ten-minute deadline. Original EEPROM ownership
+is retained, both emulators are stopped and the debugger forward is absent.
+The phone is released; no 100% speed or accepted FPS improvement is claimed.
+
+Perf31 is version 60 / `1.2.9-pgr2-perf31`, package `.dev.local`, local APK
+SHA-256 `2432ac4ba8f5335c9b2a5b994563b28bb98a9762cb573db793f6f7656f825ea2`.
+Local compilation, v2 signature/certificate, manifest and actual arm64
+diagnostic-string verification pass. Builds and tests remain local, without
+Judge or CI/CD dispatch, and no private game data is uploaded.
