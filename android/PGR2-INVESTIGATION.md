@@ -1797,3 +1797,53 @@ The emulator processes are stopped and no guest-debugger forward remains.
 The phone is released at 18:08:02 Madrid before the ten-minute deadline.
 No 100% speed or full-lap graphics claim is made. CI/CD remains disabled;
 builds and checks are local, without a Judge workflow or private game upload.
+
+### Perf28 extended functional run and perf29 vertex-upload experiment
+
+A fresh ten-minute device window completes an extended 3x functional run with
+D24 queued copy off and profiling off. The scanout source remains 1920x1440.
+The 363.230-second marker interval contains 72 complete five-second flip
+windows averaging 26.594 FPS. The player advances through several sections,
+but the short steering phases hit barriers; during capture/analysis gaps the
+player coasts and eventually stops while the rivals continue. This mixed run
+is not a sustained moving-race benchmark, matched comparison or complete lap.
+Buildings, road and HUD are coherent in the reviewed captures, and no fatal
+exception or device loss appears in the captured process log. End thermal
+status is 1, unlike the status-zero ends of the earlier short samples.
+
+Displayed lap time changes from 20.820 to 379.587 seconds between captures
+whose device acquisition bounds imply a clock/wall ratio of 1.064-1.073.
+The game's displayed clock is not an independent simulation-speed reference:
+this result must not be reported as achieving original speed or exceeding it.
+Both installations' states and all fifteen properties are restored and
+verified, with the final verification completed at 18:32:12 Madrid within the
+user's ten-minute window. There is no clean full-lap or 100% speed result.
+
+Perf29 adds opt-in `debug.xemu.vk.vertex_same_bytes=1`. When an upload overlaps
+vertex pages protected for earlier commands, the renderer still downloads
+dirty overlapping surfaces first. It compares at most 64 KiB with the current
+frame's mapped RAM buffer, and only if every affected page is already uploaded.
+Exact equality returns without a host write or vertex-related finish, while
+retaining the existing flush/propagation spans and command-buffer page tracking.
+Changed, unuploaded or larger ranges keep the existing finish-and-upload path;
+the mapped buffer is obtained again after that finish can advance the frame.
+No hash match, game ID, shader omission or weakened GPU dependency is used.
+The experiment defaults off. Sixty-frame counters report equal-data skips,
+fallbacks and vertex finishes for the next device comparison.
+
+Host ASan/UBSan checks pass, including changing each byte of a 64 KiB generated
+range, unaligned/end-of-allocation spans, overflow/oversize rejection, inaccessible
+guard pages and read-only mappings. Vulkan synchronization validation on
+llvmpipe passes with three buffer versions and comparisons before/after queue
+submission; prior readbacks retain their original bytes. Existing generated
+copy/depth-view fixtures also pass. These checks validate the shared comparison
+primitive and buffer ordering, not full emulator compatibility or a FPS gain.
+
+The local APK is version 58 / `1.2.9-pgr2-perf29`, package `.dev.local`, SHA-256
+`c27b3af6fd10c9fe8b5b083a4b3bed4f966533f9e87c4b496491aea8aaa677b2`.
+Compilation, v2 signature and manifest checks pass; the native generated-data
+fixtures also cross-compile for arm64. The next device test is prepared with
+fresh preservation/restoration of all sixteen properties and repeated
+enabled/disabled moving starts at 3x, followed by separate profiled samples.
+It has not run yet. No measured perf29 gain or sustained Full HD speed is
+claimed. Builds/checks remain local, CI/CD disabled and Judge unused.

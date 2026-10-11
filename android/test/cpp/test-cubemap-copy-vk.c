@@ -358,6 +358,7 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
 }
 
 #include "test-depth-stencil-vk.h"
+#include "test-vertex-upload-vk.h"
 
 int main(int argc, char **argv)
 {
@@ -435,6 +436,7 @@ int main(int argc, char **argv)
     };
     VkCommandPool pool;
     CHECK(vkCreateCommandPool(device, &pool_info, NULL, &pool));
+    test_vertex_upload(queue, pool);
     test_cube(queue, pool, 16);
     test_cube(queue, pool, 256);
     test_cube(queue, pool, 512); /* 2x reflections */

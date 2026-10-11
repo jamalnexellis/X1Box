@@ -24,6 +24,29 @@
  */
 
 #include "renderer.h"
+#include "vertex-upload.h"
+
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <sys/system_properties.h>
+#endif
+
+static bool vertex_same_bytes_enabled(void)
+{
+#ifdef __ANDROID__
+    static int enabled = -1;
+    if (enabled < 0) {
+        char prop[PROP_VALUE_MAX] = {};
+        __system_property_get("debug.xemu.vk.vertex_same_bytes", prop);
+        enabled = strcmp(prop, "1") == 0;
+        __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                            "vertex same-bytes experiment=%d", enabled);
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
 
 VkDeviceSize pgraph_vk_update_index_buffer(PGRAPHState *pg, void *data,
                                            VkDeviceSize size)
@@ -66,6 +89,22 @@ void pgraph_vk_update_vertex_ram_buffer(PGRAPHState *pg, hwaddr offset,
      * overwriting a page any of it reads.
      */
     if (find_next_bit(r->cb_vertex_pages, end_bit, start_bit) < end_bit) {
+        if (vertex_same_bytes_enabled()) {
+            StorageBuffer *current = get_staging_buffer(r, BUFFER_VERTEX_RAM);
+            bool uploaded = find_next_zero_bit(get_uploaded_bitmap(r),
+                                               end_bit, start_bit) >= end_bit;
+            if (vk_vertex_upload_unchanged(current->mapped,
+                                           current->buffer_size, data,
+                                           offset, size, uploaded)) {
+                /* Do not even memcpy equal data: the GPU may be reading this
+                 * allocation. Keep its existing flush/propagation ranges and
+                 * track the whole range exactly as the ordinary upload does. */
+                bitmap_set(r->cb_vertex_pages, start_bit, nbits);
+                OPT_STAT_INC(vtx_same_bytes_skips);
+                return;
+            }
+            OPT_STAT_INC(vtx_same_bytes_fallbacks);
+        }
         pgraph_vk_finish(pg, VK_FINISH_REASON_VERTEX_BUFFER_DIRTY);
     }
 

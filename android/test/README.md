@@ -29,6 +29,22 @@ D24/D32 sampled-view reuse, ownership transfer, queued sampling and retirement
 checks. With no arguments the earlier cube/color/D16 fixtures still run.
 The device must support the formats exercised by the selected fixtures.
 
+The buffer fixture also exercises the shared exact vertex-upload comparison
+before and after queue submission. Three generated versions retain their
+earlier readback bytes, and changed bytes take the completion-before-overwrite
+fallback. This checks buffer byte preservation and ordering; it does not
+exercise the full emulator's vertex fetch or measure a game.
+
+The separate guarded CPU fixture detects a change at every byte of a 64 KiB
+range, checks page/end boundaries, rejects unuploaded and oversized ranges,
+and compares read-only mappings without writing to them:
+
+```sh
+cc -I . -UNDEBUG -Wall -Wextra -Werror -fsanitize=address,undefined \
+  android/test/cpp/test-vertex-upload.c -o "$task_dir/vertex-check"
+"$task_dir/vertex-check"
+```
+
 For Android, build the existing `test-cubemap-copy-vk` native target with the
 NDK and pass the two generated SPIR-V files as arguments to that binary.
 Synchronization validation requires a validation layer on the executing

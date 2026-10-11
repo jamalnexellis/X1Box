@@ -205,6 +205,11 @@ static void opt_stats_log_and_reset(void)
     static int frame_counter = 0;
     if (++frame_counter % 60 == 0) {
 #ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_INFO, "xemu-vertex",
+                "same_bytes_skip=%d fallback=%d vertex_finish=%d",
+                g_opt_stats.vtx_same_bytes_skips,
+                g_opt_stats.vtx_same_bytes_fallbacks,
+                g_opt_stats.finish_vtx_dirty);
         __android_log_print(ANDROID_LOG_INFO, "xemu-sfp",
                 "SFP:%d/%d BLtx:%d PTx:%d VAF:%d TxPool:%d/%d SRS:%d SEE:%d InlClr:%d/%d miss: clr%d noPl%d noCb%d noRp%d noFb%d fbD%d shC%d piD%d dsR%d uni%d noDs%d tG%d ndG%d pmM%d prD%d vG%d tV%d",
                 g_opt_stats.super_fast_hits,

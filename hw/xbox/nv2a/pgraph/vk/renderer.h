@@ -130,6 +130,8 @@ struct OptBisectStats {
     int transition_count;
     int finish_calls;
     int finish_vtx_dirty;
+    int vtx_same_bytes_skips;
+    int vtx_same_bytes_fallbacks;
     int finish_surf_create;
     int finish_surf_down;
     int sd_eviction;
