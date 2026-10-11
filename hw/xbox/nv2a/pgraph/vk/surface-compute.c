@@ -21,28 +21,11 @@
 #include "qemu/fast-hash.h"
 #include "qemu/lru.h"
 #include "renderer.h"
+#include "compute-workgroup.h"
+#include "depth-stencil-pack-glsl.h"
 #include <vulkan/vulkan_core.h>
 
 // TODO: Float depth format (low priority, but would be better for accuracy)
-
-const char *pack_d24_unorm_s8_uint_to_z24s8_glsl =
-    "layout(push_constant) uniform PushConstants { uint width_in, width_out; };\n"
-    "layout(set = 0, binding = 0) buffer DepthIn { uint depth_in[]; };\n"
-    "layout(set = 0, binding = 1) buffer StencilIn { uint stencil_in[]; };\n"
-    "layout(set = 0, binding = 2) buffer DepthStencilOut { uint depth_stencil_out[]; };\n"
-    "uint get_input_idx(uint idx_out) {\n"
-    "    uint scale = width_in / width_out;\n"
-    "    uint y = (idx_out / width_out) * scale;\n"
-    "    uint x = (idx_out % width_out) * scale;\n"
-    "    return y * width_in + x;\n"
-    "}\n"
-    "void main() {\n"
-    "    uint idx_out = gl_GlobalInvocationID.x;\n"
-    "    uint idx_in = get_input_idx(idx_out);\n"
-    "    uint depth_value = depth_in[idx_in];\n"
-    "    uint stencil_value = (stencil_in[idx_in / 4] >> ((idx_in % 4) * 8)) & 0xff;\n"
-    "    depth_stencil_out[idx_out] = depth_value << 8 | stencil_value;\n"
-    "}\n";
 
 const char *unpack_z24s8_to_d24_unorm_s8_uint_glsl =
     "layout(push_constant) uniform PushConstants { uint width_in, width_out; };\n"
@@ -182,7 +165,7 @@ static gchar *get_compute_shader_glsl(VkFormat host_fmt, bool pack,
 
     switch (host_fmt) {
     case VK_FORMAT_D24_UNORM_S8_UINT:
-        template = pack ? pack_d24_unorm_s8_uint_to_z24s8_glsl :
+        template = pack ? xemu_vk_pack_d24_glsl :
                           unpack_z24s8_to_d24_unorm_s8_uint_glsl;
         break;
     case VK_FORMAT_D32_SFLOAT_S8_UINT:
@@ -400,24 +383,9 @@ void pgraph_vk_compute_finish_complete(PGRAPHVkState *r)
 
 static int get_workgroup_size_for_output_units(PGRAPHVkState *r, int output_units)
 {
-    int group_size = 1024;
-
-    // FIXME: Smarter workgroup size calculation could factor in multiple
-    //        submissions. For now we will just pick the highest number that
-    //        evenly divides output_units.
-
-    while (group_size > 1) {
-        if (group_size > r->device_props.limits.maxComputeWorkGroupSize[0]) {
-            group_size /= 2;
-            continue;
-        }
-        if (output_units % group_size == 0) {
-            break;
-        }
-        group_size /= 2;
-    }
-
-    return group_size;
+    return vk_compute_workgroup_size(output_units,
+        r->device_props.limits.maxComputeWorkGroupSize[0],
+        r->device_props.limits.maxComputeWorkGroupInvocations);
 }
 
 static ComputePipeline *get_compute_pipeline(PGRAPHVkState *r, VkFormat host_fmt, bool pack, int output_units)

@@ -28,6 +28,7 @@
 #include "qemu/compiler.h"
 #include "ui/xemu-settings.h"
 #include "renderer.h"
+#include "surface-depth-view-vk.h"
 
 const int num_invalid_surfaces_to_keep = 10;  // FIXME: Make automatic
 const int max_surface_frame_time_delta = 5;
@@ -1851,6 +1852,7 @@ static void create_surface_image(PGRAPHState *pg, SurfaceBinding *surface)
 
     assert(!surface->image);
     assert(!surface->image_scratch);
+    assert(!surface->depth_view);
     surface->image_width = width;
     surface->image_height = height;
 
@@ -1950,6 +1952,7 @@ static void migrate_surface_image(SurfaceBinding *dst, SurfaceBinding *src)
 {
     dst->image = src->image;
     dst->image_view = src->image_view;
+    vk_surface_depth_view_move(&dst->depth_view, &src->depth_view);
     dst->image_layout = src->image_layout;
     dst->image_width = src->image_width;
     dst->image_height = src->image_height;
@@ -1983,6 +1986,7 @@ static void destroy_surface_image(PGRAPHVkState *r, SurfaceBinding *surface)
     pgraph_vk_invalidate_desc_set_cache(r);
     vkDestroyImageView(r->device, surface->image_view, NULL);
     surface->image_view = VK_NULL_HANDLE;
+    vk_surface_depth_view_release(r->device, &surface->depth_view);
 
     SurfaceImageConfig pool_cfg = {
         .format = surface->host_fmt.vk_format,

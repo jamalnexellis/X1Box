@@ -35,6 +35,8 @@
 #include "surface-copy-vk.h"
 #include "depth-copy.h"
 #include "depth-copy-vk.h"
+#include "surface-depth-view-vk.h"
+#include "depth-stencil-copy-vk.h"
 #include "qemu/timer.h"
 
 #ifdef __ANDROID__
@@ -1372,23 +1374,10 @@ static void copy_zeta_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surfac
         VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
     surface->image_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
-    // Create depth-only image view for compute sampling
-    VkImageViewCreateInfo depth_view_info = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = surface->image,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = surface->host_fmt.vk_format,
-        .subresourceRange = {
-            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-    };
-    VkImageView depth_view;
-    VK_CHECK(vkCreateImageView(r->device, &depth_view_info, NULL,
-                               &depth_view));
+    /* Descriptors recorded below outlive this function. Keep the view with
+     * its surface instead of destroying it before the command is submitted. */
+    VK_CHECK(vk_surface_depth_view_get(r->device, surface->image,
+        surface->host_fmt.vk_format, &surface->depth_view));
 
     // Step 3: Barrier for stencil buffer availability
     VkBufferMemoryBarrier stencil_barrier = {
@@ -1417,7 +1406,7 @@ static void copy_zeta_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surfac
 
     // Step 4: Compute shader samples depth + reads stencil → packs output
     pgraph_vk_pack_depth_stencil_direct(
-        pg, surface, cmd, depth_view,
+        pg, surface, cmd, surface->depth_view,
         stencil_buffer->buffer, stencil_buffer_offset, stencil_size,
         r->storage_buffers[BUFFER_COMPUTE_SRC].buffer, false);
 
@@ -1474,8 +1463,6 @@ static void copy_zeta_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surfac
                                       texture->current_layout,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     texture->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-    vkDestroyImageView(r->device, depth_view, NULL);
 
     pgraph_vk_end_debug_marker(r, cmd);
 #if OPT_SURF_TO_TEX_INLINE
@@ -1694,11 +1681,29 @@ static bool depth_queue_copy_enabled(void)
 #endif
 }
 
+static bool zeta_queue_copy_enabled(void)
+{
+#ifdef __ANDROID__
+    static int enabled = -1;
+    if (enabled < 0) {
+        char prop[PROP_VALUE_MAX] = {};
+        enabled = __system_property_get("debug.xemu.vk.zeta_copy_queue", prop) > 0 &&
+                  prop[0] == '1';
+        __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                            "depth-stencil queued-copy experiment=%d", enabled);
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
 static bool can_queue_depth_copy(PGRAPHState *pg, const SurfaceBinding *s,
                                  const TextureBinding *t)
 {
 #if OPT_SURF_TO_TEX_INLINE
-    if (!depth_queue_copy_enabled()) return false;
+    bool stencil = s->host_fmt.vk_format == VK_FORMAT_D24_UNORM_S8_UINT;
+    if (stencil ? !zeta_queue_copy_enabled() : !depth_queue_copy_enabled()) return false;
     PGRAPHVkState *r = pg->vk_renderer_state;
     const TextureShape *shape = &t->key.state;
     VkDepthCopyPolicy policy = {
@@ -1711,18 +1716,29 @@ static bool can_queue_depth_copy(PGRAPHState *pg, const SurfaceBinding *s,
         .destination_width = t->image_config.width,
         .destination_height = t->image_config.height,
         .scratch_capacity = r->storage_buffers[BUFFER_COMPUTE_DST].buffer_size,
+        .output_capacity = r->storage_buffers[BUFFER_COMPUTE_SRC].buffer_size,
+        .stencil_alignment = r->device_props.limits.minStorageBufferOffsetAlignment,
+        .max_workgroup_x = r->device_props.limits.maxComputeWorkGroupSize[0],
+        .max_invocations = r->device_props.limits.maxComputeWorkGroupInvocations,
+        .max_group_count = r->device_props.limits.maxComputeWorkGroupCount[0],
+        .stencil = stencil,
         .allow_scaled = scaled_copy_enabled(), .cubemap = shape->cubemap,
         .border = vk_surface_copy_storage_border(shape->border,
             kelvin_color_format_info_map[shape->color_format].linear),
         .active = s->access_cb != NULL,
         .initialized = s->initialized && s->image_layout != VK_IMAGE_LAYOUT_UNDEFINED,
         .upload_pending = s->upload_pending, .download_pending = s->download_pending,
-        .native_d16_r16 = !s->color &&
-            s->host_fmt.aspect == VK_IMAGE_ASPECT_DEPTH_BIT &&
-            s->host_fmt.vk_format == VK_FORMAT_D16_UNORM &&
-            s->host_fmt.host_bytes_per_pixel == 2 &&
-            t->image_config.format == VK_FORMAT_R16_UNORM &&
-            texture_format_for_shape(r, *shape, t->key.address).vk_format == VK_FORMAT_R16_UNORM &&
+        .native_compatible = !s->color &&
+            (stencil ?
+                (s->host_fmt.aspect == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) &&
+                 s->host_fmt.host_bytes_per_pixel == 4 &&
+                 (t->image_config.format == VK_FORMAT_R8G8B8A8_UNORM ||
+                  t->image_config.format == VK_FORMAT_B8G8R8A8_UNORM)) :
+                (s->host_fmt.aspect == VK_IMAGE_ASPECT_DEPTH_BIT &&
+                 s->host_fmt.vk_format == VK_FORMAT_D16_UNORM &&
+                 s->host_fmt.host_bytes_per_pixel == 2 &&
+                 t->image_config.format == VK_FORMAT_R16_UNORM)) &&
+            texture_format_for_shape(r, *shape, t->key.address).vk_format == t->image_config.format &&
             t->image_config.image_type == VK_IMAGE_TYPE_2D &&
             t->image_config.depth == 1 && t->image_config.mip_levels == 1 &&
             (t->image_config.usage & (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) ==
@@ -1731,6 +1747,9 @@ static bool can_queue_depth_copy(PGRAPHState *pg, const SurfaceBinding *s,
     };
     return vk_depth_copy_eligible(&policy) &&
         r->storage_buffers[BUFFER_COMPUTE_DST].buffer &&
+        (!stencil || (r->storage_buffers[BUFFER_COMPUTE_SRC].buffer &&
+            r->storage_buffers[BUFFER_COMPUTE_SRC].buffer !=
+            r->storage_buffers[BUFFER_COMPUTE_DST].buffer)) &&
         (t->current_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ||
          t->current_layout == VK_IMAGE_LAYOUT_UNDEFINED);
 #else
@@ -1844,6 +1863,19 @@ static void wait_texture_reuse(PGRAPHState *pg, TextureBinding *texture,
 #endif
 }
 
+typedef struct DepthStencilPackContext {
+    PGRAPHState *pg;
+    SurfaceBinding *surface;
+} DepthStencilPackContext;
+
+static void record_depth_stencil_pack(void *user, VkCommandBuffer cmd,
+                                       VkBuffer input, VkBuffer output)
+{
+    DepthStencilPackContext *context = user;
+    pgraph_vk_pack_depth_stencil(context->pg, context->surface, cmd,
+                                 input, output, false);
+}
+
 static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
                                     TextureBinding *texture, bool queue_copy)
 {
@@ -1870,6 +1902,14 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         wait_texture_reuse(pg, texture, surface);
     }
     if (eligible) {
+        bool stencil = !surface->color &&
+            surface->host_fmt.vk_format == VK_FORMAT_D24_UNORM_S8_UINT;
+        if (stencil && pgraph_vk_compute_needs_finish(r)) {
+            /* Descriptor exhaustion still requires retirement; do not rewrite
+             * a descriptor referenced by a submitted or recorded dispatch. */
+            pgraph_vk_finish(pg, VK_FINISH_REASON_NEED_BUFFER_SPACE);
+            pgraph_vk_flush_all_frames(pg);
+        }
         /* Prior users are now recorded. Preserve stable allocations and views:
          * the queue barriers order their reads before this in-place write. */
         int64_t start = nv2a_stall_start();
@@ -1879,6 +1919,16 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
             vk_surface_copy_record(cmd, surface->image, surface->image_layout,
                 texture->image, texture->current_layout,
                 surface->image_width, surface->image_height);
+        } else if (stencil) {
+            DepthStencilPackContext context = {pg, surface};
+            vk_depth_stencil_copy_record(cmd, surface->image, surface->image_layout,
+                texture->image, texture->current_layout,
+                r->storage_buffers[BUFFER_COMPUTE_DST].buffer,
+                r->storage_buffers[BUFFER_COMPUTE_SRC].buffer,
+                vk_depth_stencil_offset(surface->image_width, surface->image_height,
+                    r->device_props.limits.minStorageBufferOffsetAlignment),
+                surface->image_width, surface->image_height,
+                record_depth_stencil_pack, &context);
         } else {
             vk_depth_copy_record(cmd, surface->image, surface->image_layout,
                 texture->image, texture->current_layout,
@@ -1891,8 +1941,15 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         nv2a_profile_inc_counter(NV2A_PROF_SURF_TO_TEX);
         nv2a_stall_record(NV2A_STALL_TEXTURE_RECORD, start, 0);
 #ifdef __ANDROID__
-        static bool engaged, depth_engaged;
-        if (!surface->color && !depth_engaged) {
+        static bool engaged, depth_engaged, stencil_engaged;
+        if (stencil && !stencil_engaged) {
+            __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                "depth-stencil queued-copy path engaged: D24 integer pack scale=%d "
+                "copy_width=%u copy_height=%u", pg->surface_scale_factor,
+                surface->image_width, surface->image_height);
+            stencil_engaged = true;
+        }
+        if (!surface->color && !stencil && !depth_engaged) {
             __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
                 "depth queued-copy path engaged: D16 to R16 scale=%d "
                 "copy_width=%u copy_height=%u", pg->surface_scale_factor,

@@ -8,6 +8,9 @@
 #include "hw/xbox/nv2a/pgraph/vk/cubemap-copy-vk.h"
 #include "hw/xbox/nv2a/pgraph/vk/surface-copy-vk.h"
 #include "hw/xbox/nv2a/pgraph/vk/depth-copy-vk.h"
+#include "hw/xbox/nv2a/pgraph/vk/depth-stencil-copy-vk.h"
+#include "hw/xbox/nv2a/pgraph/vk/depth-copy.h"
+#include "hw/xbox/nv2a/pgraph/vk/surface-depth-view-vk.h"
 
 #define CHECK(call) do { VkResult result_ = (call); \
     if (result_ != VK_SUCCESS) { \
@@ -45,7 +48,8 @@ static VkDeviceMemory make_buffer(VkDeviceSize size, VkBuffer *buffer)
 {
     VkBufferCreateInfo info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size,
-        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
     CHECK(vkCreateBuffer(device, &info, NULL, buffer));
@@ -73,7 +77,9 @@ static VkDeviceMemory make_image(uint32_t width, uint32_t height,
         .extent = { width, height, 1 }, .mipLevels = 1, .arrayLayers = layers,
         .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
         .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                 VK_IMAGE_USAGE_SAMPLED_BIT | (format == VK_FORMAT_D16_UNORM ?
+                 VK_IMAGE_USAGE_SAMPLED_BIT | ((format == VK_FORMAT_D16_UNORM ||
+                    format == VK_FORMAT_D24_UNORM_S8_UINT ||
+                    format == VK_FORMAT_D32_SFLOAT_S8_UINT) ?
                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT),
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
@@ -351,7 +357,9 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
            source_format, destination_format, width, height);
 }
 
-int main(void)
+#include "test-depth-stencil-vk.h"
+
+int main(int argc, char **argv)
 {
     bool validate = getenv("XEMU_TEST_VALIDATE") != NULL;
     VkValidationFeatureEnableEXT feature = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
@@ -467,6 +475,16 @@ int main(void)
         test_surface(queue, pool, 1280, 480, formats[i], destination, 4);
         test_surface(queue, pool, 2560, 960, formats[i], destination, 4);
         test_surface(queue, pool, 3840, 1440, formats[i], destination, 4);
+    }
+    if (argc >= 2) {
+        test_stencil(queue, pool, argv[1], 16, 16, VK_FORMAT_R8G8B8A8_UNORM);
+        test_stencil(queue, pool, argv[1], 1280, 480, VK_FORMAT_R8G8B8A8_UNORM);
+        test_stencil(queue, pool, argv[1], 3840, 1440, VK_FORMAT_B8G8R8A8_UNORM);
+        test_stencil(queue, pool, argv[1], 3072, 3072, VK_FORMAT_R8G8B8A8_UNORM);
+    }
+    if (argc >= 3) {
+        test_depth_view(queue, pool, argv[2], VK_FORMAT_D24_UNORM_S8_UINT);
+        test_depth_view(queue, pool, argv[2], VK_FORMAT_D32_SFLOAT_S8_UINT);
     }
     vkDestroyCommandPool(device, pool, NULL);
     vkDestroyDevice(device, NULL);

@@ -1711,3 +1711,89 @@ restored. HDD/EEPROM hashes, local app data hashes and original EEPROM ownership
 are verified. The emulators are stopped with no diagnostic forward remaining.
 The phone is released at 17:22:01 Madrid, before the ten-minute window ends.
 All work is local; CI/CD stays disabled and no Judge workflow is used.
+
+### Perf28: retained depth views and queued integer D24/S8 packing
+
+The ordinary depth/stencil texture-copy path previously destroyed its sampled
+depth image view before submitting commands that reference it. A surface now
+owns one lazily created depth-only view, transfers ownership when its image
+migrates, and retires the view with the image after the existing GPU drain.
+This fixes resource lifetime and removes repeated view creation; it is not a
+confirmed explanation for the artifacts in the newer race-start snapshot.
+
+The opt-in `debug.xemu.vk.zeta_copy_queue=1` adds a queued D24/S8-to-RGBA/BGRA
+path. It copies both aspects into aligned GPU scratch storage, packs the raw
+24-bit depth and eight-bit stencil with the existing integer compute shader,
+and copies the packed bytes into the destination image. Prior image/buffer
+users, dispatch and transfer access, subsequent scratch reuse, and final image
+layouts retain explicit dependencies on the same queue. Descriptor exhaustion
+still drains pending commands before descriptor reuse. It does not alter
+guest instruction timing, omit rendering, or match a game ID.
+
+Eligibility requires active initialized images, no pending CPU upload or
+download, exact native and allocated dimensions, one level/layer, compatible
+formats, distinct images/buffers, and sufficient aligned scratch capacity.
+The stencil word reads require a pixel count divisible by four; incompatible
+cases use the existing path. D32 depth conversion also retains the existing
+path with the corrected view lifetime. Compute workgroup selection now obeys
+both the per-axis size and total invocation limit of the actual GPU, and the
+new queued policy also checks the dispatch group count. The experiment
+defaults off.
+
+Host ASan/UBSan policy checks and Vulkan synchronization validation pass.
+Generated pixel tests also pass on the Adreno 830: three queued D24 versions
+at 16x16, 1280x480, 3840x1440 and 3072x3072, with prior destination reads and
+exact packed-byte comparisons. Separate D24/D32 view tests exercise 64 cache
+lookups, ownership migration, three queued depth samples, and retirement after
+completion. Existing cube/color/D16 tests pass. These checks cover the shared
+production primitives and shader; they do not establish full-game graphics
+correctness or a performance gain.
+
+The local build produces version 57 / `1.2.9-pgr2-perf28`, package `.dev.local`,
+APK SHA-256 `8d41022ceea71b9b01eca7df582173e739914794aa8e8f0ab9207c5cfbf7633c`.
+APK v2 signature and manifest verification pass with the existing local
+certificate. Actual startup confirms the D24 queued path at 1280x480 (1x)
+and 3840x1440 (3x), with a 1920x1440 scanout source at 3x and 2340x1080 Android
+output. Internal allocation resolution and Android output remain distinct.
+
+Four 24-second driving captures use ON/OFF/OFF/ON order at 3x with the other
+copy/pacing settings constant and profiling off. Each restores the immutable
+older Slot 2 and restarts the race through the game menu. Four complete
+five-second flip windows wholly inside each input marker give:
+
+| D24 queued copy | First descriptive FPS | Second descriptive FPS | Pooled FPS |
+| --- | ---: | ---: | ---: |
+| ON | 25.654 | 25.349 | 25.501 |
+| OFF | 26.261 | 26.093 | 26.177 |
+
+This is not an accepted gain. The player and three rivals move in the first
+straight; later trajectories differ, with the first adjacent pair ending near
+the right barrier and the reverse pair on the second straight. Buildings,
+road and HUD are coherent in the reviewed mid/turn/end images. These short
+samples do not prove sustained speed or full-game graphics correctness. The
+D24 experiment remains off by default.
+
+Screenshot acquisition now has before/after device timestamps around the
+capture itself, excluding host transfer time from the interval. From the mid
+to end images, ON lap-clock delta divided by acquisition-elapsed bounds is
+0.966-1.057 and 0.951-1.066 in the two runs. This does not establish 100%:
+the intervals are short, acquisition takes roughly a second, displayed-frame
+latency and guest timer behavior remain additional limits, and no clean full
+lap is measured. Longer capture attempts are rejected by the private deadline
+guard before starting so that restoration remains inside the agreed window.
+
+Separate profiled 1x ON/OFF driving traces contain 660/651 complete frames.
+Neither records a texture reuse wait in its accepted movement interval. Raw
+vertex-related finish totals are 734.7/695.9 ms; presentation totals are
+1061.1/1077.0 ms. Texture decoding is tens of milliseconds, and pipeline
+creation remains visible. These nested, overlapping host wall times include
+profiling overhead and differ in the sampled trajectory. They identify
+remaining synchronization candidates, not a causal or additive frame budget.
+There is no measured benefit attributable to the new D24 path here.
+
+Both installations' current app states and all fifteen diagnostic properties
+are restored and hash-verified, with original EEPROM ownership retained.
+The emulator processes are stopped and no guest-debugger forward remains.
+The phone is released at 18:08:02 Madrid before the ten-minute deadline.
+No 100% speed or full-lap graphics claim is made. CI/CD remains disabled;
+builds and checks are local, without a Judge workflow or private game upload.
