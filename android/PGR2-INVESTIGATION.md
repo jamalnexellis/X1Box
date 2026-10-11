@@ -2056,3 +2056,64 @@ actual arm64 experiment/diagnostic strings pass verification. APK SHA-256:
 `6d15cb32eadc3966da694f8a32d7924d0bbc286054ead748ebe787fbc0c7e1a6`.
 The policy and extended Vulkan fixtures also cross-compile for arm64. No
 Judge or CI/CD pipeline is used, and no private game data is uploaded.
+
+### Perf32 device checks and bounded moving-race comparison
+
+A fresh ten-minute window on 2026-10-11 installs perf32 only in `.dev.local`.
+The CPU propagation fixture passes all 12000 rotations on the phone. The
+extended Vulkan fixture passes all six 24-version mirror histories on the
+Adreno 830, as well as its generated cube, native color, byte-preserving
+color and D16 copy/readback checks. Device transfer readbacks check bytes and
+ordering; they do not exercise full vertex fetch or an actual game scene.
+
+Four fresh-process 3x moving starts use the same older snapshot followed by
+the game's Restart Race and the same bounded throttle/steering plan. All
+other experimental settings stay fixed: presentation reuse and equal-data
+vertex comparison are off; the previously checked cube/color/D16/scaled-copy
+and presentation-pacing settings are on. CPU and graphics profiling are off
+for these four FPS runs. Each result selects four complete roughly five-second
+flip-count windows wholly inside that process's movement markers:
+
+| Pending-page copy | First run | Repeat |
+| --- | ---: | ---: |
+| OFF (corrected bounding range) | 26.624 FPS | 23.946 FPS |
+| ON (coalesced pending pages) | 26.949 FPS | 26.687 FPS |
+
+OFF/ON/ON/OFF pooled descriptive results are 25.285/26.818 FPS, a 6.062%
+difference. The OFF repeat varies substantially, later trajectories/contact
+differ, and only a short start/first-curve interval is covered. This is not
+accepted as a reliable 6% speed gain or proof of sustained original speed.
+
+Separate profiled OFF/ON runs each provide four complete five-second copy
+diagnostic intervals inside movement. OFF reports 1103 rotations, 210153472
+copied/bounding bytes, 210 copy runs and 27207 microseconds of host copy time
+over 20014266 microseconds. ON reports 1097 rotations, 4743168 copied bytes
+versus its own 261296128-byte bounding alternative, 532 copy runs and 1423
+microseconds of host copy time over 20050722 microseconds. Thus the sparse
+route avoids about 98.2% of its equivalent bounding-copy bytes in this actual
+capture. The two runs have different histories; their totals are not matched
+per-event measurements. Even the OFF copy time is only about 0.14% of its
+selected wall interval, so this reduction alone does not explain the remaining
+frame-rate shortfall.
+
+Complete emulated-frame diagnostic records cover a separate approximately
+25-second selection: OFF/ON have 635/650 frames, median intervals 37.024/36.657
+ms, p95 intervals 60.991/59.602 ms and maxima 107.256/95.383 ms. Host presentation
+totals are 1426.595/1544.152 ms, GPU-fence totals 1353.341/1000.066 ms and pipeline
+creation totals 335.050/283.759 ms. These timings can overlap or nest across
+threads and are not an additive CPU/GPU utilization budget. They do not locate
+the entire bottleneck or establish causality for the FPS difference.
+
+All six reviewed mid/end image pairs show coherent player car, road, buildings
+and HUD. Each mid image shows the player and three AI cars moving; later rivals
+advance on the minimap. Touch steering/throttle take effect and inputs release
+at the end of each plan. All six end thermal statuses are zero and captured
+process logs contain no fatal exception, assertion or device loss. This remains
+a limited graphics check, not full-game compatibility. Internal scanout is
+1920x1440 with 2340x1080 output; no sustained 100% speed claim is made.
+
+Both installations' HDD/preferences/EEPROM state and all seventeen diagnostic
+properties are restored and verified at 21:24:50 Madrid, before the agreed
+21:26:22 end. Original EEPROM ownership is retained, emulators are stopped
+and the debugger forward is absent. The phone is released. Sparse copying
+remains opt-in; per-destination history correctness applies in both modes.
