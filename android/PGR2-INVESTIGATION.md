@@ -2381,3 +2381,51 @@ existing signing certificate, package/version and actual arm64 diagnostic
 strings pass verification. The delivery APK matches the tested artifact;
 52 selected build inputs are checked against the committed sources. APK
 SHA-256: `2590b9dd79a90116703a40f56ab18ead63154f82ed7054b4dcd146c3f64ed840`.
+
+### Perf36 follow-up with native touch timing, 12 October
+
+The first follow-up finishes four short starts after an initial phone lock.
+Review finds that a mid capture in one run still shows the race countdown:
+the capture was scheduled from Windows job creation, while the asynchronous
+touch helper started later. Outer shell begin/end markers also include helper
+startup and teardown. Those bounds can admit extra windows outside actual
+touch driving, so this repeat set is retained privately as diagnostic data
+and is not used to accept an FPS gain. Its protected state and nineteen
+properties are restored at 00:04:40 Madrid.
+
+The standalone Android test helper now logs native touch begin/end markers
+with `SystemClock.uptimeMillis`, after the first injection and after gesture
+release. Captures wait for the native start rather than host job creation.
+The analysis checks marker/uptime agreement, the installed APK hash, emulator
+PID and actual input duration, then selects only complete flip windows between
+those markers. Longer qualifying windows are retained to avoid hiding stalls.
+The helper and this measurement correction leave the production APK at perf36.
+
+The corrected session completes perf35/perf36/perf36 before the final perf35
+reinstallation waits on a Google Play Protect dialog. Four complete windows
+per process measure 26.170 FPS for perf35 and 27.137/26.491 FPS for perf36.
+The pooled perf36 result is 26.814 FPS. Its eight five-second windows range
+from 24.871 to 28.144 FPS; every window is below 29.7 FPS. These are window
+averages, not instantaneous minima or frame-time percentiles. The incomplete
+comparison and trajectory variation still prevent accepting a sustained
+FPS gain. Original simulation speed and stable 30 FPS at 3x remain unverified.
+
+All three corrected mid/end pairs show coherent road, buildings, car and HUD,
+with three moving rivals in the mid captures and later course/minimap progress.
+Throttle and steering respond and release. The reviewed game clocks advance
+from 3.404/4.337/3.804 to 22.970/24.254/23.287 seconds; capture latency,
+different contact and trajectories remain limits. All three end thermal
+statuses are zero. Captured emulator processes show no fatal exception,
+assertion or device loss. Internal scanout is 1920x1440 at 3x, with native
+2340x1080 presentation. This covers short moving starts, not complete laps.
+
+The blocked final comparison is cancelled without accepting the Play Protect
+prompt or changing verification settings. The three measured runs remain
+separate from that incomplete installation attempt. Lab HDD/preferences/
+EEPROM hashes and all nineteen diagnostic properties are restored and verified
+at 00:17:19 Madrid. The installer delay exceeds the planned 00:16:25 session
+deadline; a future harness must bound installation waits as well as gameplay.
+The pending comparison session subsequently disappears. Perf36 remains
+installed with the previously verified APK hash, and the emulator is stopped.
+The other Android profile remains untouched. No raw captures, traces, game
+data or caches are uploaded; local checks continue with Judge and CI/CD off.

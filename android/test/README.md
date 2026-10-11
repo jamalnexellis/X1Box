@@ -212,3 +212,47 @@ cc $task_flags android/test/cpp/test-prim-rewrite.c \
 The six alternating timings measure only strip assembly in this fixture.
 They do not measure game FPS, guest simulation speed or complete renderer
 correctness. Compare the actual APKs in moving gameplay with diagnostics off.
+
+# Android driving measurement markers
+
+`android/test/java/DrivingTouch.java` is a standalone shell test helper for
+the separate `.dev.local` test installation. It injects steering and throttle
+touches only while that installation's `MainActivity` has focus. Each phase
+checks focus repeatedly, and the helper releases the gesture at completion.
+Protect and restore the test installation's data and emulator properties
+around each session. The helper has been exercised on Android SDK 36.
+
+Build it with the Android 36 SDK and build tools used for the local APK:
+
+```sh
+mkdir -p "$task_dir/touch-classes" "$task_dir/touch-dex"
+javac --release 17 -cp "$task_sdk/platforms/android-36/android.jar" \
+  -d "$task_dir/touch-classes" android/test/java/DrivingTouch.java
+"$task_sdk/build-tools/36.1.0/d8" --min-api 29 \
+  --lib "$task_sdk/platforms/android-36/android.jar" \
+  --output "$task_dir/touch-dex" "$task_dir/touch-classes/DrivingTouch.class"
+jar cf "$task_dir/driving-touch.jar" -C "$task_dir/touch-dex" classes.dex
+adb push "$task_dir/driving-touch.jar" /data/local/tmp/x1box-driving-touch.jar
+adb shell 'CLASSPATH=/data/local/tmp/x1box-driving-touch.jar app_process /system/bin DrivingTouch 2340 1080 "10:0:1,3:-0.2:0,2:-0.45:0,9:0:1" perf36-example'
+```
+
+Arguments are screen width, height, a sequence of
+`seconds:steering:throttle` phases, and an optional unique label beginning
+with `perf36-`. Steering ranges from -1 to 1; throttle is 0 or 1. The complete
+sequence is limited to sixty seconds. Coordinates assume the default test
+touch-control layout. The example drives for twenty-four seconds.
+
+With a label, native `x1box-bench` log entries mark `touch_begin` after the
+first steering/throttle injection and `touch_end` after releasing it. Both
+include `SystemClock.uptimeMillis`. Wait for the native start before scheduling
+mid-run captures. Windows PowerShell job startup and the outer ADB process
+can take different amounts of time between runs.
+
+Collect `x1box-bench` and `xemu-fps` with `logcat -v threadtime -v monotonic`.
+Check that the marker timestamps agree with their embedded uptime values.
+Select the emulator PID, then include only complete flip windows between the
+native touch markers. Keep long windows when they satisfy those bounds;
+discarding them could hide stalls. Confirm moving player/rivals and capture
+timing separately. Countdown, different trajectories and barrier contact
+remain comparison limits. These counters measure five-second averages;
+frame-time percentiles require a separate recorder.
