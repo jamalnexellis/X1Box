@@ -23,11 +23,13 @@
 
 #include <assert.h>
 #include <glslang/Include/glslang_c_interface.h>
+#include "glslang-prewarm.h"
 #include <stdio.h>
 #include <sys/stat.h>
 
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <sys/system_properties.h>
 #define GLSL_ERR(...) __android_log_print(ANDROID_LOG_ERROR, "xemu-glsl", __VA_ARGS__)
 #else
 #define GLSL_ERR(...) fprintf(stderr, __VA_ARGS__)
@@ -168,9 +170,42 @@ static const glslang_resource_t
                             .general_constant_matrix_vector_indexing = 1,
                         } };
 
+static glslang_input_t make_glsl_input(glslang_stage_t stage,
+                                     const char *source);
+
 void pgraph_vk_init_glsl_compiler(void)
 {
     glslang_initialize_process();
+    bool prewarm = true;
+#ifdef __ANDROID__
+    char property[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.vk.compiler_prewarm", property);
+    prewarm = strcmp(property, "0") != 0;
+#endif
+    if (prewarm) {
+        /* All generated Vulkan guest shaders use GLSL 450. Preprocessing
+         * loads the version/profile/target's process-wide built-in tables;
+         * initialize_process alone leaves that work until the first miss. */
+        glslang_input_t input = make_glsl_input(GLSLANG_STAGE_VERTEX, NULL);
+        int64_t start = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+        bool ready = nv2a_glslang_prewarm(&input);
+#ifdef __ANDROID__
+        __android_log_print(ready ? ANDROID_LOG_INFO : ANDROID_LOG_WARN,
+            "xemu-stall", "shader compiler prewarm=1 ready=%d us=%" PRId64,
+            ready, qemu_clock_get_us(QEMU_CLOCK_REALTIME) - start);
+#else
+        (void)start;
+#endif
+        if (!ready) {
+            GLSL_ERR("Shader compiler prewarm failed; normal compilation remains enabled");
+        }
+    }
+#ifdef __ANDROID__
+    else {
+        __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
+                           "shader compiler prewarm=0");
+    }
+#endif
 }
 
 void pgraph_vk_finalize_glsl_compiler(void)
@@ -192,17 +227,17 @@ void pgraph_vk_set_glslang_target(uint32_t device_api_version)
     }
 }
 
-static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
-                                          const char *glsl_source)
+static glslang_input_t make_glsl_input(glslang_stage_t stage,
+                                     const char *source)
 {
-    const glslang_input_t input = {
+    return (glslang_input_t){
         .language = GLSLANG_SOURCE_GLSL,
         .stage = stage,
         .client = GLSLANG_CLIENT_VULKAN,
         .client_version = g_glslang_client_version,
         .target_language = GLSLANG_TARGET_SPV,
         .target_language_version = g_glslang_spv_version,
-        .code = glsl_source,
+        .code = source,
         .default_version = 460,
         .default_profile = GLSLANG_NO_PROFILE,
         .force_default_version_and_profile = false,
@@ -210,6 +245,12 @@ static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
         .messages = GLSLANG_MSG_DEFAULT_BIT,
         .resource = &resource_limits,
     };
+}
+
+static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
+                                     const char *glsl_source)
+{
+    const glslang_input_t input = make_glsl_input(stage, glsl_source);
 
     glslang_shader_t *shader = glslang_shader_create(&input);
 

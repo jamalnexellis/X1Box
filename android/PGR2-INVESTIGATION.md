@@ -2163,3 +2163,107 @@ EEPROM hashes and all seventeen diagnostic properties were restored at
 user 0 and present in another profile; that other profile was left untouched.
 Perf33 is prepared as an APK, pending the unlocked moving-race validation.
 No 100% sustained-speed claim is made; CI/CD remains disabled.
+
+### Perf33 unlocked race and scheduler diagnosis
+
+The next unlocked session on 2026-10-11 validates perf33 with the player and
+three AI cars moving at 3x, restarting the same older state from the game.
+Four unprofiled perf33/perf32/perf32/perf33 runs select four complete five-second
+flip windows per process: 26.227, 25.172, 24.616 and 23.931 FPS respectively.
+The pooled perf33/perf32 difference is only 0.743%, below the repeat variation
+and confounded by later trajectories/contact. No reliable FPS gain is accepted.
+The render-worker synchronization correction is retained for correctness.
+Reviewed car, buildings, road and HUD remain coherent in these short starts;
+all end thermal statuses are zero, with no captured fatal error/device loss.
+
+A separate profiled perf33 start has 677 complete movement-frame records,
+median 34.965 ms, p95 53.692 ms, p99 71.351 ms and maximum 146.891 ms. Its
+longest frame overlaps a 95.940 ms shader compile, including 94.334 ms of
+preprocessing. The scheduler trace records 94.182 ms of actual PFIFO-thread
+execution and 0.152 ms runnable delay during that preprocessing interval;
+the render worker sleeps through it. This specific hitch is compiler CPU
+work, not a GPU-fence wait or scheduler starvation. Other hitches need their
+own evidence. Three shader compilations occur in the selected movement span.
+
+Over the exact 24.261-second driving interval, the vCPU thread executes for
+22.079 seconds, about 91% of one CPU core; PFIFO executes for 15.148 seconds
+and the render worker for 0.591 seconds. Those threads can overlap and this
+is not whole-phone CPU/GPU utilization. The remaining sustained-speed
+shortfall cannot be explained solely by the isolated shader initialization.
+Trace parsing reports no nonzero data-loss/error stats. Raw traces, process
+logs, shader caches, game data and images stay private.
+
+The active test installation's HDD, preferences and EEPROM hashes and all
+seventeen diagnostic properties are restored at 22:32:33 Madrid. The older
+installation remains absent in user 0 and present in another profile, which
+is untouched. The phone is released with its emulator stopped.
+
+### Perf34 GLSL compiler startup preparation
+
+The pinned glslang source lazily creates process-wide GLSL built-in symbol
+tables in `SetupBuiltinSymbolTable` on first preprocessing; calling
+`glslang_initialize_process` alone does not prepare them. A process whose
+startup shaders all hit the SPIR-V cache can pay this cost at its first new
+shader during gameplay. Perf34 preprocesses a minimal GLSL 450 vertex shader
+after target selection and before guest commands. The real compile and the
+preparation share the same Vulkan/SPIR-V target and resource inputs. No module,
+pipeline or shader-cache entry is created; normal generation/validation and
+compiler options are preserved. A failed preparation leaves normal compilation
+available. Android `debug.xemu.vk.compiler_prewarm=0` disables it for diagnosis.
+This is a generic startup change with no game or device branch.
+
+Fresh cold/warm fixture processes check complete SPIR-V output preservation
+for vertex, fragment and geometry shaders at all three supported target pairs.
+All nine sizes/hashes agree on the host and arm64 phone. The first phone
+preprocess measures 78.576 ms cold versus 0.195 ms after a 74.518 ms startup
+preparation. Host values are 133.987/0.636 ms after 122.562 ms preparation.
+This moves lazy initialization to startup; it does not remove the cost of
+new shader parsing, linking, SPIR-V generation or driver pipeline creation.
+
+Perf34 builds locally as version 63 / `1.2.9-pgr2-perf34` in `.dev.local`.
+The v2 signature, existing certificate, package/version and actual arm64
+preparation switch/log strings pass verification. APK SHA-256:
+`7561109620f72182eb22294b2ea474c02f8a43965edd139c493cf8d67ca22487`.
+
+### Perf34 controlled first-miss and unprofiled device checks
+
+The unlocked 22:41-22:49 Madrid session tests only the protected `.dev.local`
+copy. The user installation in the other Android profile stays untouched.
+An initial OFF/ON pair uses the older seed SPIR-V cache, where preprocessing
+already occurs during startup. That pair therefore cannot demonstrate removal
+of lazy initialization during gameplay. A second controlled pair copies the
+known private warm SPIR-V cache and temporarily omits only the module matching
+the earlier 13,908-byte shader. Each run restores identical seeded module-key
+and driver pipeline caches. The omitted module is not in that seed; it first
+compiles while the player and rivals move. All cache manipulation is limited
+to the test copy; no game file or user cache is discarded.
+
+With preparation OFF/ON, that actual shader compile takes 103.654/5.433 ms;
+its preprocessing is 101.455/1.399 ms. The compiled SPIR-V SHA-256 matches
+exactly between both runs. The frame overlapping the compile is 154.365/62.512
+ms. This controlled test supports removing the compiler's lazy-initialization
+stall from that first gameplay miss. The work is moved to startup, where the
+ON preparation takes 55.650 ms. Other long frames remain: whole selected
+movement medians are 35.755/36.931 ms, p95 57.926/62.728 ms and maxima
+154.365/132.728 ms across 660/637 records. The ON maximum overlaps 60.793 ms
+of host `display_present`. These are nested host timings with diagnostic
+overhead, different trajectories and driver behavior; they do not establish
+an overall frame-time or FPS gain.
+
+A separate unprofiled OFF/ON first-miss pair selects four complete five-second
+flip windows per process, yielding 24.592/24.890 FPS. A single pair and its
+1.214% difference are insufficient to accept a sustained speed gain. Six
+reviewed mid/end pairs show coherent road, buildings, car and HUD; the player
+and three AI cars move, then advance along the course/minimap. Throttle and
+steering respond and release. All six end thermal statuses are zero, and
+captured process logs have no fatal exception, assertion or device loss.
+This is a short-start graphics check, not a full lap or full-game validation.
+Internal scanout remains 1920x1440 at 3x, with 2340x1080 native presentation.
+Sustained original speed is not verified.
+
+The active installation's HDD/preferences/EEPROM hashes and all eighteen
+diagnostic properties are restored and verified at 22:49:38 Madrid, before
+the protected test deadline of 22:51:16. The emulator is stopped and the phone
+is released with perf34 installed. Native fixtures, APK compilation and
+verification run locally; Judge and CI/CD are not used. Private captures,
+traces, game files and runtime caches are not uploaded.

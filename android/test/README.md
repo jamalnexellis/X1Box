@@ -131,3 +131,21 @@ cc -std=c11 -I . -UNDEBUG -Wall -Wextra -Werror -pthread \
 Use `-fsanitize=thread` instead for a separate ThreadSanitizer run. The Android
 native target is `test-render-idle`. This fixture checks host drain ordering;
 it does not submit Vulkan work or establish game stability or a speed gain.
+
+# GLSL compiler startup preparation
+
+The native target `test-glslang-prewarm` links the same pinned glslang library
+and uses the production preprocessing helper. Run it in separate processes
+without arguments and with `--warm`. It compiles GLSL 450 vertex, fragment and
+geometry fixtures for Vulkan 1.1/SPIR-V 1.3, Vulkan 1.2/SPIR-V 1.5 and Vulkan
+1.3/SPIR-V 1.6. Warming again must preserve each complete SPIR-V output byte
+for byte; compare the nine sizes/hashes across the two fresh processes too.
+
+The helper preprocesses a minimal shader, warming glslang's process-wide lazy
+built-in tables. It creates no Vulkan module, pipeline or disk-cache entry.
+Actual shader compilation retains its existing inputs, validation and SPIR-V
+options. `debug.xemu.vk.compiler_prewarm=0` disables startup preparation on
+Android for comparisons; the default is enabled. The startup log reports
+whether preparation succeeded and its host elapsed time. A failure retains
+normal shader compilation. This shifts initialization work to startup; it
+does not eliminate compilation of new shaders or establish a game FPS gain.

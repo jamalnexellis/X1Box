@@ -1333,6 +1333,16 @@ add_executable(test-render-idle EXCLUDE_FROM_ALL
 target_include_directories(test-render-idle PRIVATE "${REPO_ROOT}")
 target_compile_options(test-render-idle PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+if(XEMU_ENABLE_VULKAN)
+  add_executable(test-glslang-prewarm EXCLUDE_FROM_ALL
+    "${REPO_ROOT}/android/test/cpp/test-glslang-prewarm.c"
+  )
+  target_include_directories(test-glslang-prewarm PRIVATE "${REPO_ROOT}" "${glslang_SOURCE_DIR}")
+  target_compile_options(test-glslang-prewarm PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+  set_target_properties(test-glslang-prewarm PROPERTIES LINKER_LANGUAGE CXX)
+  target_link_libraries(test-glslang-prewarm PRIVATE glslang SPIRV glslang-default-resource-limits)
+endif()
+
 add_executable(test-cubemap-copy-vk EXCLUDE_FROM_ALL
   "${REPO_ROOT}/android/test/cpp/test-cubemap-copy-vk.c"
 )
