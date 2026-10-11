@@ -1658,6 +1658,23 @@ static bool surface_queue_copy_enabled(void)
 #endif
 }
 
+static bool scaled_copy_enabled(void)
+{
+#ifdef __ANDROID__
+    static int enabled = -1;
+    if (enabled < 0) {
+        char prop[PROP_VALUE_MAX] = {};
+        enabled = __system_property_get("debug.xemu.vk.scaled_copy", prop) > 0 &&
+                  prop[0] == '1';
+        __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                            "scaled GPU copy experiment=%d", enabled);
+    }
+    return enabled;
+#else
+    return false;
+#endif
+}
+
 static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
                                     const TextureBinding *t)
 {
@@ -1674,6 +1691,11 @@ static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
         .dimensions = shape->dimensionality, .levels = shape->levels,
         .layers = t->image_config.array_layers, .scale = pg->surface_scale_factor,
         .source_width = s->width, .source_height = s->height,
+        .source_image_width = s->image_width,
+        .source_image_height = s->image_height,
+        .destination_width = t->image_config.width,
+        .destination_height = t->image_config.height,
+        .allow_scaled = scaled_copy_enabled(),
         .cubemap = shape->cubemap,
         .border = vk_surface_copy_storage_border(shape->border, linear),
         .color = s->color,
@@ -1686,8 +1708,7 @@ static bool can_queue_surface_copy(PGRAPHState *pg, const SurfaceBinding *s,
             t->image_config.image_type == VK_IMAGE_TYPE_2D &&
             (t->image_config.usage & (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)) ==
                 (VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT) &&
-            t->image_config.width == shape->width &&
-            t->image_config.height == shape->height && t->image_config.depth == 1 &&
+            t->image_config.depth == 1 &&
             t->image_config.mip_levels == 1,
         .distinct_images = s->image && t->image && s->image != t->image,
     };
@@ -1791,7 +1812,8 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         OPT_STAT_INC(nd_copysurf);
         VkCommandBuffer cmd = pgraph_vk_begin_nondraw_commands(pg);
         vk_surface_copy_record(cmd, surface->image, surface->image_layout,
-            texture->image, texture->current_layout, surface->width, surface->height);
+            texture->image, texture->current_layout,
+            surface->image_width, surface->image_height);
         pgraph_vk_end_nondraw_commands(pg, cmd);
         texture->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         texture->draw_time = surface->draw_time;
@@ -1801,7 +1823,9 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         static bool engaged;
         if (!engaged) {
             __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
-                                "surface queued-copy path engaged: byte-preserving color 2D");
+                "surface queued-copy path engaged: byte-preserving color 2D "
+                "scale=%d copy_width=%u copy_height=%u",
+                pg->surface_scale_factor, surface->image_width, surface->image_height);
             engaged = true;
         }
         static struct {
@@ -1960,7 +1984,13 @@ static bool get_cube_copy_sources(PGRAPHState *pg, const TextureShape *shape,
 {
     if (!cube_copy_enabled() || !shape->cubemap ||
         shape->color_format != NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R5G6B5 ||
-        shape->levels != 1 || shape->border || pg->surface_scale_factor != 1) {
+        shape->levels != 1 || shape->border) {
+        return false;
+    }
+    uint32_t image_width, image_height;
+    if (!vk_scaled_copy_extent(shape->width, shape->height,
+            pg->surface_scale_factor, scaled_copy_enabled(),
+            &image_width, &image_height)) {
         return false;
     }
     NV2AState *d = container_of(pg, NV2AState, pgraph);
@@ -1982,6 +2012,7 @@ static bool get_cube_copy_sources(PGRAPHState *pg, const TextureShape *shape,
         faces[i] = (VkCubeCopyFace) {
             .address = s->vram_addr, .size = s->size, .image = (uint64_t)s->image,
             .width = s->width, .height = s->height, .pitch = s->pitch,
+            .image_width = s->image_width, .image_height = s->image_height,
             .active = s->access_cb != NULL, .color = s->color,
             .swizzle = s->swizzle,
             .initialized = s->initialized && s->image_layout != VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1999,7 +2030,7 @@ static bool get_cube_copy_sources(PGRAPHState *pg, const TextureShape *shape,
         shape->height, shape->depth, shape->dimensionality, shape->levels,
         pg->surface_scale_factor, shape->cubemap, shape->border,
         r->texture_format_map[shape->color_format].vk_format ==
-            VK_FORMAT_R5G6B5_UNORM_PACK16, faces);
+            VK_FORMAT_R5G6B5_UNORM_PACK16, scaled_copy_enabled(), faces);
 }
 
 static bool cube_has_pending_source_draws(PGRAPHVkState *r,
@@ -2040,6 +2071,14 @@ static void copy_cube_surfaces_to_texture(PGRAPHState *pg,
     SurfaceBinding *sources[6], TextureBinding *texture)
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
+    /* A scaled GPU cube has its own cache key and allocation. Never copy into
+     * the native-size CPU fallback binding or a stale scale allocation. */
+    assert(texture->image_config.width == sources[0]->image_width &&
+           texture->image_config.height == sources[0]->image_height &&
+           texture->image_config.depth == 1 &&
+           texture->image_config.array_layers == 6 &&
+           texture->image_config.mip_levels == 1 &&
+           texture->image_config.format == VK_FORMAT_R5G6B5_UNORM_PACK16);
     NV2AState *d = container_of(pg, NV2AState, pgraph);
     VkCubeCopyKey before = { .surface_list_gen = r->surface_list_gen };
     for (unsigned i = 0; i < 6; i++) {
@@ -2078,8 +2117,8 @@ static void copy_cube_surfaces_to_texture(PGRAPHState *pg,
         int64_t start = nv2a_stall_start();
         VkCommandBuffer cmd = pgraph_vk_begin_nondraw_commands(pg);
         vk_cube_copy_record(cmd, images, layouts, texture->image,
-            texture->current_layout, texture->key.state.width,
-            texture->key.state.height);
+            texture->current_layout, texture->image_config.width,
+            texture->image_config.height);
         pgraph_vk_end_nondraw_commands(pg, cmd);
         texture->current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         texture->cube_copy_cache.key = key;
@@ -2091,7 +2130,10 @@ static void copy_cube_surfaces_to_texture(PGRAPHState *pg,
         static unsigned detail_count;
         if (!engaged) {
             __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
-                                "GPU cubemap copy path engaged: RGB565 six faces");
+                "GPU cubemap copy path engaged: RGB565 six faces "
+                "scale=%d copy_width=%u copy_height=%u",
+                pg->surface_scale_factor, texture->image_config.width,
+                texture->image_config.height);
             engaged = true;
         }
         if (start && detail_count++ < 16) {
@@ -2537,7 +2579,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         }
     }
 
-    if (surface_to_texture && pg->surface_scale_factor > 1) {
+    if (gpu_texture && pg->surface_scale_factor > 1) {
         key.scale = pg->surface_scale_factor;
     }
 
@@ -2754,7 +2796,7 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         .flags = (state.cubemap ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0),
     };
 
-    if (surface_to_texture) {
+    if (gpu_texture) {
         pgraph_apply_scaling_factor(pg, &image_create_info.extent.width,
                                         &image_create_info.extent.height);
     }

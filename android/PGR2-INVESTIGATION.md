@@ -1601,3 +1601,56 @@ processes are stopped and no guest-debugger forward remains. The phone is
 released at 03:40:42 Madrid, before the original 03:41:37 deadline. Pacing
 remains opt-in while sustained driving and newly appearing scenery are tested.
 No CI/CD workflow, Judge review or private guest-data upload is used.
+
+### Perf26: scaled GPU copies and moving-race diagnostics
+
+An opt-in `debug.xemu.vk.scaled_copy=1` extends the existing cube/queued-color
+copy experiments to matching 2x/3x/4x allocations (maximum copy dimension
+4096). Surface bindings retain their actual image extents across migration;
+the image pool also uses those extents when retiring an allocation. All six
+cube faces must match the current scale. Scaled GPU cubes have separate
+texture cache keys and allocations from native CPU fallback cubes. Guest
+VRAM addresses, face strides and sizes remain native. Copy regions use actual
+image dimensions, with the existing queue dependencies preserved. The new
+property defaults off.
+
+Host ASan/UBSan policy checks reject stale or mismatched allocations, invalid
+scales and overflowing dimensions. Generated pixel fixtures pass local Vulkan
+synchronization validation and run successfully on the phone's Adreno 830:
+512/768-square RGB565 cubes with a queued face replacement, 1920x1440 color
+copies, and 2560x960/3840x1440 RGBA/BGRA byte-preserving copies with prior reads
+and three queued versions. These fixtures do not establish game compatibility.
+
+The local build produces version 55 / `1.2.9-pgr2-perf26`, package `.dev.local`,
+APK SHA-256 `7ef29eb79e1eed09e55d078c53a9578a3da9663a0474e27d962716eb04b0de66`.
+APK v2 verification passes with the same local certificate as perf25. Actual
+game startup confirms a 1920x1440 scanout source, 3840x1440 queued color copies
+and 768x768 six-face copies at 3x. The output screen remains 2340x1080; internal
+resolution and display stretching are separate measurements.
+
+A private race-start state is created with three AI rivals visible. A bounded
+shell touch helper accelerates the car with independent trigger/stick pointers,
+checks the test activity's foreground state, and releases both inputs at the
+end. Short 12-second driving captures reach the first corner. The enabled 3x
+capture has two complete five-second flip windows around 21-22 FPS. These are
+functional samples, not a sustained or balanced performance comparison. The
+disabled route shows conspicuous stretched geometry/reflections, and artifacts
+also appear just after restoring the new state in the enabled route. A later
+enabled image is coherent, but this does not establish a complete graphics fix.
+Neither original game speed nor full-circuit compatibility is achieved.
+
+A separate profiled 1x driving capture contains 302 complete frames: median
+41.775 ms, p95 59.162 ms and maximum 148.121 ms. Texture reuse waits total
+2.832 seconds (605 calls), whereas decoding totals 28.675 ms. Depth D16-to-R16
+copies and R8 color copies are among the logged fallback routes. Vertex-related
+finish time totals 334.522 ms. These host wall times overlap/nest and include
+profiling overhead; they are diagnostic evidence, not additive GPU timings or
+an FPS gain. The next candidate should address the remaining texture reuse
+dependencies rather than assume CPU decoding is dominant.
+
+Both installations' current states are preserved before testing. The test
+package uses app-owned directory backups and a read-only link to its existing
+disc; the original package is not replaced. Both app states and all thirteen
+diagnostic properties are restored and hash-checked; EEPROM ownership is
+retained. The phone is released at 16:57:16 Madrid within the ten-minute window.
+CI/CD remains disabled. No private game content is included in the fork.

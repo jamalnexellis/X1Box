@@ -1851,6 +1851,8 @@ static void create_surface_image(PGRAPHState *pg, SurfaceBinding *surface)
 
     assert(!surface->image);
     assert(!surface->image_scratch);
+    surface->image_width = width;
+    surface->image_height = height;
 
     NV2A_VK_DPRINTF(
         "Creating new surface image width=%d height=%d @ %08" HWADDR_PRIx,
@@ -1949,6 +1951,8 @@ static void migrate_surface_image(SurfaceBinding *dst, SurfaceBinding *src)
     dst->image = src->image;
     dst->image_view = src->image_view;
     dst->image_layout = src->image_layout;
+    dst->image_width = src->image_width;
+    dst->image_height = src->image_height;
     dst->allocation = src->allocation;
     dst->image_scratch = src->image_scratch;
     dst->image_scratch_current_layout = src->image_scratch_current_layout;
@@ -1957,6 +1961,7 @@ static void migrate_surface_image(SurfaceBinding *dst, SurfaceBinding *src)
     src->image = VK_NULL_HANDLE;
     src->image_view = VK_NULL_HANDLE;
     src->image_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    src->image_width = src->image_height = 0;
     src->allocation = VK_NULL_HANDLE;
     src->image_scratch = VK_NULL_HANDLE;
     src->image_scratch_current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1979,17 +1984,10 @@ static void destroy_surface_image(PGRAPHVkState *r, SurfaceBinding *surface)
     vkDestroyImageView(r->device, surface->image_view, NULL);
     surface->image_view = VK_NULL_HANDLE;
 
-    unsigned int w = surface->width ? surface->width : 1;
-    unsigned int h = surface->height ? surface->height : 1;
-    unsigned int sf = g_nv2a->pgraph.surface_scale_factor;
-    if (sf > 1) {
-        w *= sf;
-        h *= sf;
-    }
     SurfaceImageConfig pool_cfg = {
         .format = surface->host_fmt.vk_format,
-        .width = w,
-        .height = h,
+        .width = surface->image_width,
+        .height = surface->image_height,
         .usage = VK_IMAGE_USAGE_SAMPLED_BIT |
                  VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT | surface->host_fmt.usage,
@@ -2003,6 +2001,7 @@ static void destroy_surface_image(PGRAPHVkState *r, SurfaceBinding *surface)
     surface->allocation = VK_NULL_HANDLE;
     surface->image_scratch = VK_NULL_HANDLE;
     surface->allocation_scratch = VK_NULL_HANDLE;
+    surface->image_width = surface->image_height = 0;
 }
 
 static bool check_invalid_surface_is_compatibile(SurfaceBinding *surface,

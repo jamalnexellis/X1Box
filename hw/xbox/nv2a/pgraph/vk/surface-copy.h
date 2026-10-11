@@ -3,10 +3,14 @@
 #define XEMU_VK_SURFACE_COPY_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "scaled-copy.h"
 
 typedef struct VkSurfaceCopyPolicy {
     uint32_t width, height, depth, dimensions, levels, layers, scale;
     uint32_t source_width, source_height;
+    uint32_t source_image_width, source_image_height;
+    uint32_t destination_width, destination_height;
+    bool allow_scaled;
     bool cubemap, border, color, active, initialized;
     bool upload_pending, download_pending, byte_copy_compatible, distinct_images;
 } VkSurfaceCopyPolicy;
@@ -31,11 +35,19 @@ enum VkSurfaceCopyRejection {
 static inline uint32_t vk_surface_copy_rejections(const VkSurfaceCopyPolicy *p)
 {
     uint32_t reasons = 0;
-    if (!p->width || !p->height || p->width > 4096 || p->height > 4096 ||
+    uint32_t width = 0, height = 0;
+    bool extent_valid = vk_scaled_copy_extent(p->width, p->height, p->scale,
+        p->allow_scaled, &width, &height);
+    if (!extent_valid ||
         p->width != p->source_width || p->height != p->source_height ||
         p->depth != 1 || p->dimensions != 2 || p->levels != 1 ||
-        p->layers != 1 || p->scale != 1 || p->cubemap) {
+        p->layers != 1 || p->cubemap) {
         reasons |= VK_SURFACE_COPY_GEOMETRY;
+    }
+    if (extent_valid && (p->source_image_width != width ||
+        p->source_image_height != height || p->destination_width != width ||
+        p->destination_height != height)) {
+        reasons |= VK_SURFACE_COPY_FORMAT_ALLOCATION;
     }
     if (p->border) {
         reasons |= VK_SURFACE_COPY_BORDER;

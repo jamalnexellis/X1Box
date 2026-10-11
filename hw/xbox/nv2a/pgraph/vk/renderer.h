@@ -324,6 +324,8 @@ typedef struct SurfaceBinding {
     VkImage image;
     VkImageView image_view;
     VkImageLayout image_layout;
+    /* Actual allocation extent, retained across scale changes and migration. */
+    unsigned int image_width, image_height;
     VmaAllocation allocation;
 
     // Used for scaling

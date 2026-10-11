@@ -3,10 +3,12 @@
 #define XEMU_VK_CUBEMAP_COPY_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "scaled-copy.h"
 
 typedef struct VkCubeCopyFace {
     uint64_t address, size, image;
     uint32_t width, height, pitch, draw_time, draw_generation;
+    uint32_t image_width, image_height;
     bool active, color, swizzle, initialized, native_rgb565;
     bool upload_pending, download_pending;
 } VkCubeCopyFace;
@@ -24,10 +26,13 @@ typedef struct VkCubeCopyCache {
 static inline bool vk_cube_copy_eligible(uint64_t base, uint64_t length,
     uint64_t layer_size, uint32_t width, uint32_t height, uint32_t depth,
     uint32_t dimensionality, uint32_t levels, uint32_t scale,
-    bool cubemap, bool border, bool native_rgb565,
+    bool cubemap, bool border, bool native_rgb565, bool allow_scaled,
     const VkCubeCopyFace faces[6])
 {
-    if (!cubemap || border || !native_rgb565 || scale != 1 || levels != 1 ||
+    uint32_t image_width = 0, image_height = 0;
+    if (!vk_scaled_copy_extent(width, height, scale, allow_scaled,
+                              &image_width, &image_height) ||
+        !cubemap || border || !native_rgb565 || levels != 1 ||
         depth != 1 || dimensionality != 2 || !width || width != height ||
         width > 4096 || (width & (width - 1))) {
         return false;
@@ -43,6 +48,7 @@ static inline bool vk_cube_copy_eligible(uint64_t base, uint64_t length,
             !f->native_rgb565 || f->upload_pending || f->download_pending ||
             !f->image || f->address != base + layer_size * i ||
             f->width != width || f->height != height ||
+            f->image_width != image_width || f->image_height != image_height ||
             f->pitch != width * 2 || f->size != bytes) {
             return false;
         }

@@ -402,6 +402,8 @@ int main(void)
     CHECK(vkCreateCommandPool(device, &pool_info, NULL, &pool));
     test_cube(queue, pool, 16);
     test_cube(queue, pool, 256);
+    test_cube(queue, pool, 512); /* 2x reflections */
+    test_cube(queue, pool, 768); /* 3x, non-power-of-two host allocation */
     VkFormat formats[] = { VK_FORMAT_R5G6B5_UNORM_PACK16,
         VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM };
     for (unsigned i = 0; i < 3; i++) {
@@ -423,12 +425,15 @@ int main(void)
         unsigned bytes = i ? 4 : 2;
         test_surface(queue, pool, 16, 16, formats[i], formats[i], bytes);
         test_surface(queue, pool, 640, 480, formats[i], formats[i], bytes);
+        test_surface(queue, pool, 1920, 1440, formats[i], formats[i], bytes);
     }
     for (unsigned i = 1; i < 3; i++) {
         VkFormat destination = formats[i == 1 ? 2 : 1];
         test_surface(queue, pool, 16, 16, formats[i], destination, 4);
         test_surface(queue, pool, 640, 480, formats[i], destination, 4);
         test_surface(queue, pool, 1280, 480, formats[i], destination, 4);
+        test_surface(queue, pool, 2560, 960, formats[i], destination, 4);
+        test_surface(queue, pool, 3840, 1440, formats[i], destination, 4);
     }
     vkDestroyCommandPool(device, pool, NULL);
     vkDestroyDevice(device, NULL);

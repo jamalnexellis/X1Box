@@ -6,7 +6,7 @@
 static bool eligible(const VkCubeCopyFace f[6])
 {
     return vk_cube_copy_eligible(0x100000, 786432, 131072, 256, 256, 1,
-                                2, 1, 1, true, false, true, f);
+                                2, 1, 1, true, false, true, false, f);
 }
 
 int main(void)
@@ -17,6 +17,7 @@ int main(void)
         faces[i] = (VkCubeCopyFace) {
             .address = 0x100000 + 131072 * i, .size = 131072, .image = i + 1,
             .width = 256, .height = 256, .pitch = 512, .active = true,
+            .image_width = 256, .image_height = 256,
             .color = true, .swizzle = true, .initialized = true,
             .native_rgb565 = true,
         };
@@ -44,12 +45,14 @@ int main(void)
         REJECT(size, 131070);
         REJECT(width, 128);
         REJECT(height, 128);
+        REJECT(image_width, 512);
+        REJECT(image_height, 512);
         REJECT(pitch, 1024);
 #undef REJECT
     }
 #define SHAPE(w,h,d,dim,mips,scale,cube,border,fmt) \
     vk_cube_copy_eligible(0x100000, 786432, 131072, w,h,d,dim,mips,scale, \
-                          cube,border,fmt,faces)
+                          cube,border,fmt,false,faces)
     assert(!SHAPE(256,256,1,2,1,2,true,false,true));
     assert(!SHAPE(256,256,1,2,2,1,true,false,true));
     assert(!SHAPE(256,256,1,2,1,1,true,true,true));
@@ -61,11 +64,28 @@ int main(void)
     assert(!SHAPE(255,255,1,2,1,1,true,false,true));
 #undef SHAPE
     assert(!vk_cube_copy_eligible(UINT64_MAX - 100, 786432, 131072,
-        256,256,1,2,1,1,true,false,true,faces));
+        256,256,1,2,1,1,true,false,true,false,faces));
     assert(!vk_cube_copy_eligible(0x100000, 786431, 131072,
-        256,256,1,2,1,1,true,false,true,faces));
+        256,256,1,2,1,1,true,false,true,false,faces));
     assert(!vk_cube_copy_eligible(0x100000, 786432, UINT64_MAX,
-        256,256,1,2,1,1,true,false,true,faces));
+        256,256,1,2,1,1,true,false,true,false,faces));
+
+    for (unsigned scale = 2; scale <= 4; scale++) {
+        for (unsigned i = 0; i < 6; i++) {
+            faces[i].image_width = faces[i].image_height = 256 * scale;
+        }
+        assert(!vk_cube_copy_eligible(0x100000, 786432, 131072,
+            256,256,1,2,1,scale,true,false,true,false,faces));
+        assert(vk_cube_copy_eligible(0x100000, 786432, 131072,
+            256,256,1,2,1,scale,true,false,true,true,faces));
+        /* Each face's allocation must match; guest VRAM layout stays native. */
+        for (unsigned i = 0; i < 6; i++) {
+            faces[i].image_height = 256;
+            assert(!vk_cube_copy_eligible(0x100000, 786432, 131072,
+                256,256,1,2,1,scale,true,false,true,true,faces));
+            faces[i].image_height = 256 * scale;
+        }
+    }
 
     VkCubeCopyCache cache = { 0 };
     assert(vk_cube_copy_needs_refresh(&cache, &key));
