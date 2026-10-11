@@ -65,7 +65,9 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <sys/system_properties.h>
 #include <SDL3/SDL_vulkan.h>
+#include "xemu-present-pacing.h"
 #endif
 #ifdef _WIN32
 #include "nvapi.h"
@@ -1510,6 +1512,15 @@ void xemu_android_display_loop(void)
     bql_unlock();
     qemu_mutex_unlock_main_loop();
 
+    char present_pace_property[PROP_VALUE_MAX] = { 0 };
+    __system_property_get("debug.xemu.vk.present_pace", present_pace_property);
+    bool pace_native_present =
+        g_android_direct_vulkan && strcmp(present_pace_property, "1") == 0;
+    int64_t last_present_request_ns = -1;
+    __android_log_print(ANDROID_LOG_INFO, "xemu-android",
+                        "android: native presentation pacing=%d target_fps=%d",
+                        pace_native_present, g_android_target_fps);
+
     while (1) {
         if (g_android_qemu_thread_finished) {
             break;
@@ -1551,6 +1562,7 @@ void xemu_android_display_loop(void)
             qemu_mutex_unlock_main_loop();
         }
         if (g_android_paused || sdl2_console[0].hidden) {
+            last_present_request_ns = -1;
             qemu_mutex_lock_main_loop();
             bql_lock();
             sdl2_poll_events(&sdl2_console[0]);
@@ -1575,8 +1587,15 @@ void xemu_android_display_loop(void)
              * surface while servicing this framebuffer request. Android's
              * controller overlay is a separate View above the SDL surface.
              */
-            (void)nv2a_get_framebuffer_surface();
-            nv2a_release_framebuffer_surface();
+            int64_t now_ns = pace_native_present ?
+                qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
+            if (!pace_native_present ||
+                xemu_present_request_due(last_present_request_ns, now_ns,
+                                         g_android_frame_interval_ns)) {
+                last_present_request_ns = now_ns;
+                (void)nv2a_get_framebuffer_surface();
+                nv2a_release_framebuffer_surface();
+            }
             qemu_mutex_lock_main_loop();
             bql_lock();
             sdl2_poll_events(&sdl2_console[0]);

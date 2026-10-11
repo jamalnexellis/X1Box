@@ -44,6 +44,7 @@ val localCmakeArguments = listOf(
  */
 val vulkanValidationJniLibs =
   providers.environmentVariable("XEMU_VVL_JNILIBS").orNull
+val localTestApk = providers.environmentVariable("XEMU_LOCAL_TEST_APK").orNull == "1"
 
 android {
   namespace = "com.izzy2lost.x1box"
@@ -61,8 +62,8 @@ android {
     minSdk = 29
     targetSdk = 36
 
-    versionCode = 53
-    versionName = "1.2.9-pgr2-perf24"
+    versionCode = 54
+    versionName = "1.2.9-pgr2-perf25"
 
     ndk {
       abiFilters += listOf("arm64-v8a")
@@ -108,7 +109,9 @@ android {
     debug {
       // Keep locally signed development builds installable alongside the
       // Play-signed release so device testing never requires clearing user data.
-      applicationIdSuffix = ".dev"
+      // A fresh local signing key cannot update the existing CI-signed app.
+      // Keep local tests in a separate package while retaining the normal dev ID.
+      applicationIdSuffix = if (localTestApk) ".dev.local" else ".dev"
       externalNativeBuild {
         cmake {
           arguments += listOf("-DXEMU_ENABLE_LTO=ON", "-DXEMU_ENABLE_PERF_LOG=OFF")

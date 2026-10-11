@@ -1494,3 +1494,110 @@ synchronization validation, and texture-upload fixture compilation. This
 checks the replacement test environment; a full local APK build has not yet
 been run, and the installed development APK's signing key is not present
 locally. The installed app and its data are retained.
+
+## Perf25: bound Android native presentation requests
+
+Offline analysis of the perf24 profile trace finds approximately 74--92 native
+presentation calls per second, or 4.5--5.4 calls per complete guest flip, in
+successive five-second windows. The stationary windows slow from 19.192 to
+16.935 profiled flips/second with zero texture decodes and zero shader
+compilations. That decline cannot be attributed to new texture decoding in
+those windows. Pipeline creation occurs only once in the middle stationary
+window, taking 0.343 ms in total. This does not identify the whole slowdown's
+cause: host scopes overlap, profiling affects performance and presentation
+source keys were not logged. The calls are not proven identical images.
+
+The native Vulkan branch of `xemu_android_display_loop` requests scanout on
+every SDL iteration, followed by a 1 ms delay; unlike the GL branch, it does
+not apply the configured presentation interval. Each scanout request kicks
+PFIFO, queues a render-thread display command and waits for completion. The
+renderer can acquire, draw, submit and present again before the next guest
+flip. Perf17's stricter identical-image reuse experiment did not engage in
+its capture and does not resolve this request cadence.
+
+Perf25 adds an opt-in `debug.xemu.vk.present_pace=1` experiment that limits
+native scanout requests to the existing Android target presentation interval
+(60 Hz by default). SDL input polling, menu/snapshot request servicing and
+the loop's 1 ms delay remain outside the cadence condition. Late requests do
+not trigger catch-up bursts; pause/hidden paths reset the request time. Guest
+flip/vblank timing, GPU barriers and correctness waits are unchanged. The
+property is read at display-loop startup and defaults off. Startup logging
+identifies the actual mode and target rate. This is a candidate to measure,
+not a proven performance gain or a default change.
+
+Host ASan/UBSan timing checks pass for the 1 ms polling timeline, deadline
+boundaries, a slow request without catch-up bursts, resume/backward clock and
+a 120 Hz configured interval. A full local Android build is being prepared;
+independent Judge review and device correctness/FPS checks remain pending.
+The phone remains released, with no new install or setting changes.
+
+Local debug builds can select `XEMU_LOCAL_TEST_APK=1` to use the separate
+`com.izzy2lost.x1box.dev.local` application ID. The normal debug package
+remains `.dev`. This permits a persistent local development signing key
+without replacing/uninstalling the existing CI-signed app or clearing its
+data. No local package is installed as part of compilation.
+
+The local perf25 build subsequently succeeds in 7 minutes 16 seconds, producing
+version 54 / `1.2.9-pgr2-perf25`, package `.dev.local`, 35,685,661 bytes and
+SHA-256 `4e0a663bb67ea561dde7e8dacd6cf65f2a356c5255e97122c97bbc8189c92bfc`.
+`apksigner verify` passes APK v2 payload verification; its local certificate
+SHA-256 is `8af550a32fc9d6f2a7b96bff0556cc30d461a96387ebd686475582c339951f29`.
+Manifest/native inspection confirms the new pacing property/startup log and
+retained 43-phase/copy diagnostics. The ARM64 pacing test target also compiles;
+it is not executed on the released phone. Source snapshot hashes for all five
+changed build/native/test inputs match the host checkout. This is an
+uncommitted review candidate; Judge review, device compatibility and sustained
+FPS measurement remain pending. No CI/CD or phone operation is used.
+
+The user subsequently cancels Judge and requests continued testing. The
+independent-review/model-selection gate is withdrawn; device compatibility
+and sustained FPS measurement are still required before accepting a gain.
+CI/CD remains disabled and further builds/tests stay local.
+
+### Perf25 device comparison
+
+The locally signed APK is installed alongside the existing development app;
+the original package and `/sdcard/Xbox` files are retained. The timing test
+executes successfully on the phone's ARM64 CPU. Test-package files are staged
+with archive-owner restoration disabled and their app UID is checked before
+launch. Both measurement modes use the same APK, immutable save-state/cache
+fixture, Vulkan renderer, three submission slots and enabled cube/queued-copy
+experiments. Graphics/CPU profiling and identical-presentation reuse remain
+off. Actual startup/copy/controller flags are checked per emulator PID.
+
+The first OFF capture stays in the game's pause menu and is excluded from
+the race comparison after image review. A longer A press before measurement
+reliably resumes the subsequent OFF runs. Four valid stationary race captures
+use ON/OFF/OFF/ON order, with 60 seconds for the first adjacent pair and 40
+seconds for the reverse pair. The analyzer filters the recorded emulator PID,
+requires both capture markers and complete five-second intervals starting at
+least five seconds after capture begins, and rejects incomplete/mixed modes.
+
+| Presentation pacing | First run FPS | Second run FPS | Pooled FPS |
+| --- | ---: | ---: | ---: |
+| OFF | 14.749 | 15.347 | 14.974 |
+| ON | 19.302 | 18.260 | 18.910 |
+
+This is a measured 26.29% improvement for the tested stationary Florence
+scene. The two adjacent comparisons improve by 30.86% and 18.97%; restricting
+every run to its first six accepted windows gives 24.93%. The range between
+run means is 3.97% for OFF and 5.55% for ON. The last three windows average
+19.058 versus 14.025 FPS in the minute-long pair and 16.670 versus 14.355 in
+the shorter pair. A separate, earlier ON run is not pooled into this balanced
+comparison. These measurements do not prove fixed clocks or a general gain:
+the ON runs still vary, AI traffic and driver caches are not frozen, and the
+test does not reproduce loading new scenery during continuous driving.
+
+All fourteen captured images are reviewed. The valid race runs show the same
+car position at zero speed, advancing game time, neutral controls and coherent
+buildings, road and HUD. A and a separate four-second RT check respond; the
+car reaches 33 km/h with the touch released. This is limited control/visual
+coverage, not a complete controller or full-game compatibility test. Thermal
+status is zero at every measured start/end, without asserting fixed clocks.
+
+The then-current original HDD/EEPROM hashes, twelve properties and EEPROM
+ownership are independently verified after restoration. Both emulator
+processes are stopped and no guest-debugger forward remains. The phone is
+released at 03:40:42 Madrid, before the original 03:41:37 deadline. Pacing
+remains opt-in while sustained driving and newly appearing scenery are tested.
+No CI/CD workflow, Judge review or private guest-data upload is used.
