@@ -2538,3 +2538,63 @@ profile is untouched. Fifty-four selected build inputs are checked against
 the committed sources; the delivery APK matches the installed artifact.
 Builds and tests remain local with Judge and CI/CD disabled. Raw game files,
 captures, profiles and caches remain private.
+
+### Perf37 compiler and scheduler diagnosis, 12 October
+
+A new installed-only 3x moving race segment combines stall records, scheduler
+tracing and CPU-cycle sampling. Native touch timestamps bound the selected
+operations. The trace's MONOTONIC clock snapshots agree to 52 ns; scheduler
+analysis uses their offset, rather than `/proc/uptime`. No positive
+error/data-loss statistics are reported. The unstripped symbol table's ELF
+build ID matches the actual installed APK's native library.
+
+The three longest selected graphics-pipeline creations take
+50.679/42.303/39.243 ms. The calling PFIFO thread runs on CPU for
+50.298/42.244/39.229 ms during those calls. Approximately
+81.0/79.4/79.6% of that thread's sampled CPU-cycle weight in the respective
+intervals is in Qualcomm's `libllvm-qgl.so`. This identifies backend compiler
+CPU work for these hitches, rather than a sleeping PFIFO thread awaiting
+GPU completion. The vCPU runs for 46.778/40.426/38.513 ms in the same
+intervals. Sampling without JIT maps cannot identify the guest instructions
+responsible, so continued vCPU execution is not proof of useful simulation
+progress or a specific guest spin loop.
+
+For a separate 21.240 ms presentation call, the presentation worker sleeps
+for 20.796 ms and PFIFO sleeps for the full interval. The longest selected
+GPU-fence wait is 25.480 ms; its worker sleeps for 25.449 ms. Compilation
+and graphics completion therefore require distinct measurements and fixes.
+Whole-start CPU-cycle estimates assign 50.6% of sampled process cycles to
+vCPU and 27.5% to PFIFO, not percentages of total phone utilization. The
+sampler's kernel-symbol warning does not require changing kernel protection;
+its completed samples are recovered and verified. This combined diagnostic
+has overhead and does not establish an FPS improvement.
+
+Visual review shows the player moving through a different course segment,
+with three rivals progressing on the minimap. The mid/end game clocks read
+1:05.489 and 1:26.323, rather than a restarted grid. Thus this is not a
+repeat of the prior standing starts and is not used for an FPS comparison.
+Road, buildings and HUD remain coherent in the two reviewed captures.
+
+An independent capability query on the current Adreno 830 driver finds
+`VK_EXT_vertex_input_dynamic_state` and its feature available, while graphics
+pipeline libraries and shader objects are unavailable. A private generated
+pixel experiment exercises sixteen vertex layouts, including changing
+stride, offsets and float/normalized color formats. Static layouts use
+sixteen pipelines; dynamic layouts use one. Four alternating static/dynamic/
+dynamic/static rounds each verify 65,536 exact RGBA pixels. Creation totals
+are 11.217/2.921/2.790/4.898 ms; record/submit/fence totals are
+3.563/3.136/4.218/3.841 ms. Each static round reports fifteen application
+pipeline-cache hits. These flat-shader synthetic results establish a usable
+driver route, not redundant PGR2 variants or a gameplay FPS gain. Integration
+requires measuring actual game variants and preserving the vertex layout
+of each queued/reordered draw. See the
+[Khronos dynamic vertex-input sample](https://docs.vulkan.org/samples/latest/samples/extensions/vertex_dynamic_state/README.html).
+
+The protected session restores and verifies its own initial HDD/preferences/
+EEPROM hashes and nineteen diagnostic properties at 01:25:17 Madrid, before
+the 01:28:09 deadline. Preferences had changed before this session; older
+session preferences are not substituted for the new baseline. Perf37 stays
+installed and its emulator is stopped; the other Android profile is untouched.
+There is no new APK or accepted sustained FPS gain in this diagnosis. Native
+experiments and analysis run locally, with all captures/profiles/game data
+private and Judge/CI/CD disabled.
