@@ -21,6 +21,7 @@
 #include "qemu/fast-hash.h"
 #include "qemu/error-report.h"
 #include "renderer.h"
+#include "pipeline-key-compare.h"
 #include "system/physmem.h"
 #include "ui/xemu-settings.h"
 #include "hw/xbox/nv2a/pgraph/prim_rewrite.h"
@@ -515,7 +516,10 @@ static bool pipeline_cache_entry_compare(Lru *lru, LruNode *node,
                                          const void *key)
 {
     PipelineBinding *snode = container_of(node, PipelineBinding, node);
-    return memcmp(&snode->key, key, sizeof(PipelineKey));
+    const PipelineLookup *lookup = key;
+    return vk_pipeline_keys_differ(
+        &snode->key, lookup->key, sizeof(PipelineKey), lookup->key->clear,
+        &snode->shader_state, lookup->shader_state, sizeof(ShaderState));
 }
 
 static void init_pipeline_cache(PGRAPHState *pg)
@@ -1028,7 +1032,8 @@ static void create_clear_pipeline(PGRAPHState *pg)
     key.regs[0] = r->clear_parameter;
 
     uint64_t hash = fast_hash((void *)&key, sizeof(key));
-    LruNode *node = lru_lookup(&r->pipeline_cache, hash, &key);
+    PipelineLookup lookup = { .key = &key };
+    LruNode *node = lru_lookup(&r->pipeline_cache, hash, &lookup);
     PipelineBinding *snode = container_of(node, PipelineBinding, node);
 
     if (snode->pipeline != VK_NULL_HANDLE) {
@@ -1272,7 +1277,10 @@ static void init_pipeline_key(PGRAPHState *pg, PipelineKey *key)
 
     memset(key, 0, sizeof(*key));
     init_render_pass_state(pg, &key->render_pass_state);
-    memcpy(&key->shader_state, &r->shader_binding->state, sizeof(ShaderState));
+    /* The shader LRU already computed this immutable state's hash. Keep the
+     * full state in each pipeline binding for collision checks, rather than
+     * copying and rehashing it on every pipeline lookup. */
+    key->shader_state_hash = r->shader_binding->node.hash;
     memcpy(key->binding_descriptions, r->vertex_binding_descriptions,
            sizeof(key->binding_descriptions[0]) *
                r->num_active_vertex_binding_descriptions);
@@ -1422,8 +1430,16 @@ static void create_pipeline(PGRAPHState *pg)
     PipelineKey key;
     init_pipeline_key(pg, &key);
 
+    PipelineLookup lookup = {
+        .key = &key,
+        .shader_state = &r->shader_binding->state,
+    };
+
     if (r->pipeline_binding &&
-        memcmp(&key, &r->pipeline_binding->key, sizeof(key)) == 0) {
+        !vk_pipeline_keys_differ(
+            &r->pipeline_binding->key, &key, sizeof(key), false,
+            &r->pipeline_binding->shader_state, lookup.shader_state,
+            sizeof(ShaderState))) {
         NV2A_VK_DPRINTF("Cache hit (same binding)");
         g_nv2a_stats.shader_stats.pipeline_cache_hits++;
         NV2A_PHASE_TIMER_END(pipe_lookup);
@@ -1433,7 +1449,7 @@ static void create_pipeline(PGRAPHState *pg)
 
     uint64_t hash = fast_hash((void *)&key, sizeof(key));
 
-    LruNode *node = lru_lookup(&r->pipeline_cache, hash, &key);
+    LruNode *node = lru_lookup(&r->pipeline_cache, hash, &lookup);
     PipelineBinding *snode = container_of(node, PipelineBinding, node);
 
 #if OPT_ASYNC_COMPILE
@@ -1474,6 +1490,8 @@ static void create_pipeline(PGRAPHState *pg)
     NV2A_PHASE_TIMER_BEGIN(shader_compile);
 
     memcpy(&snode->key, &key, sizeof(key));
+
+    memcpy(&snode->shader_state, lookup.shader_state, sizeof(ShaderState));
 
     bool use_dyn_ds = OPT_DYNAMIC_STATES &&
                       r->extended_dynamic_state_supported;

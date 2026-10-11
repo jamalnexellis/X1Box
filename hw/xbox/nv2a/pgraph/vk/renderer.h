@@ -230,15 +230,21 @@ typedef struct RenderPass {
 typedef struct PipelineKey {
     bool clear;
     RenderPassState render_pass_state;
-    ShaderState shader_state;
+    uint64_t shader_state_hash;
     uint32_t regs[OPT_DYNAMIC_STATES ? 6 : 9];
     VkVertexInputBindingDescription binding_descriptions[NV2A_VERTEXSHADER_ATTRIBUTES];
     VkVertexInputAttributeDescription attribute_descriptions[NV2A_VERTEXSHADER_ATTRIBUTES];
 } PipelineKey;
 
+typedef struct PipelineLookup {
+    const PipelineKey *key;
+    const ShaderState *shader_state;
+} PipelineLookup;
+
 typedef struct PipelineBinding {
     LruNode node;
     PipelineKey key;
+    ShaderState shader_state;
     VkPipelineLayout layout;
     VkPipeline pipeline;
     VkRenderPass render_pass;

@@ -1371,6 +1371,20 @@ target_link_libraries(test-prim-rewrite PRIVATE glib-2.0)
 add_dependencies(test-prim-rewrite glib_ep)
 
 if(XEMU_ENABLE_VULKAN)
+add_executable(test-pipeline-key EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-pipeline-key.c"
+)
+target_include_directories(test-pipeline-key PRIVATE
+  "$<TARGET_PROPERTY:xemu_core,INCLUDE_DIRECTORIES>")
+target_compile_options(test-pipeline-key PRIVATE
+  -O3 -UNDEBUG -Wall -Wextra -Werror -Wno-unused-parameter)
+target_compile_definitions(test-pipeline-key PRIVATE
+  COMPILING_PER_TARGET CONFIG_TARGET="config-target.h"
+  XBOX CONFIG_OPENGL CONFIG_VULKAN VK_NO_PROTOTYPES)
+add_dependencies(test-pipeline-key glib_ep)
+endif()
+
+if(XEMU_ENABLE_VULKAN)
   add_executable(test-glslang-prewarm EXCLUDE_FROM_ALL
     "${REPO_ROOT}/android/test/cpp/test-glslang-prewarm.c"
   )

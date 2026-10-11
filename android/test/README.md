@@ -262,3 +262,32 @@ installation can finish after its ADB client closes, so verify the final
 package version and APK hash again before releasing the phone. Preserve
 original lab data independently of installer completion, and keep platform
 verification settings in place.
+
+# Graphics pipeline lookup keys
+
+`test-pipeline-key` compares the compact lookup predicate with the former
+complete-state key predicate across 132,000 generated cases. It covers state
+changes, forced hash collisions, render-pass/register/vertex-description
+differences, shader-cache memory reuse, clear operations without shader
+state, and clear/draw mismatches. The production comparator is shared with
+the fixture. Assertions stay enabled in the native CMake target.
+
+Android uses the actual renderer's `PipelineKey` and `ShaderState` types.
+The host fixture supplies standalone field layouts to exercise the
+size-independent comparator under ASan/UBSan:
+
+```sh
+cc -std=c11 -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -I. android/test/cpp/test-pipeline-key.c \
+  -o "$task_dir/pipeline-key-check"
+"$task_dir/pipeline-key-check"
+```
+
+The compact key borrows the shader LRU's previously computed hash, while
+each pipeline binding owns a complete shader-state copy. Every candidate
+with matching compact bytes still checks the complete state. Equal hashes
+alone never establish equality, and shader-cache eviction must not change a
+pipeline's saved state. Clear lookups do not require a shader-state pointer.
+Keep render-pass load semantics and every keyed register/descriptor field.
+Passing equivalence checks or reducing lookup-key bytes does not establish
+a game FPS gain; measure moving gameplay separately with diagnostics off.

@@ -2434,3 +2434,107 @@ Perf36 is installed and its emulator is stopped. Future tests must track
 committed installation completion independently of the host client process.
 The other Android profile remains untouched. No raw captures, traces, game
 data or caches are uploaded; local checks continue with Judge and CI/CD off.
+
+### Perf36 resolution and stall comparison, 12 October
+
+An installed-only session avoids package replacement during gameplay. Four
+unprofiled starts run at 1x/3x/3x/1x with identical settings, private shader
+and pipeline-cache seeds, and the same 24-second throttle/steering plan.
+Native touch markers bound the measured emulator-PID flip windows. The
+two 1x cases measure 27.644/28.021 FPS; the two 3x cases measure
+26.767/26.727 FPS. Seven complete windows per scale pool to 27.806 FPS
+at 1x and 26.750 FPS at 3x, a 3.80% decrease for nine times the internal
+pixels. All fourteen unprofiled windows remain below 29.7 FPS. Resolution
+cost alone does not explain the remaining shortfall in these starts.
+
+Separate profiled starts contain 45/40 graphics-pipeline creations at
+1x/3x, with maximum host durations of 36.754/38.562 ms. At 3x, native
+presentation waits reach 27.951 ms and GPU-fence waits reach 25.603 ms.
+These are nested, possibly cross-thread host durations; they cannot be
+added as GPU execution time. The diagnostic runs have overhead and do not
+establish an FPS gain. Pipeline creation can account for individual hitches
+when new material appears, alongside CPU work and synchronization waits.
+
+All six reviewed mid/end pairs show coherent road, buildings, car and HUD.
+Three rivals are visible moving in each mid capture and advance on the
+course/minimap. The player accelerates and the gesture releases. Reviewed
+game clocks progress from 3.087--3.887 to 23.170--23.970 seconds; contact
+and trajectories differ, with two end captures at the right barrier. This
+is short moving-start coverage, not full-lap or full-game validation.
+All end thermal statuses are zero and captured emulator processes show
+no fatal exception, assertion or device loss. The 3x internal scanout is
+1920x1440; native presentation is 2340x1080.
+
+Lab HDD/preferences/EEPROM hashes and all nineteen diagnostic properties
+are restored and verified at 00:41:36 Madrid, before the 00:44:44 deadline.
+Perf36 stays installed, its emulator is stopped, and the other Android
+profile is untouched. No APK installation runs inside this protected session.
+
+### Perf37 compact graphics-pipeline lookup
+
+Each graphics-pipeline lookup formerly cleared, copied and hashed a full
+shader state as part of its key. The new key reuses the immutable shader
+binding's existing LRU hash. Pipeline bindings still own a full shader-state
+copy, and both the active-binding and LRU candidate comparisons check its
+complete bytes after comparing the compact key. Hash collisions and reuse
+of shader-cache memory therefore cannot alias different saved states.
+Clear lookups have no shader pointer and retain their separate key behavior.
+
+Render-pass load semantics, keyed registers and vertex descriptions remain
+part of the equality decision. This is a generic renderer change without
+game-specific instruction substitutions, skipped drawing or approximate
+shader equality. The independent shader-state cache's normalized comparison
+does not replace the pipeline's previous full-state comparison.
+
+The host ASan/UBSan fixture and actual arm64 fixture each pass 132,000
+differential cases against the former complete-key predicate, including
+forced collisions, cache-memory reuse and clear/draw mismatches. On arm64
+the complete shader state is 2640 bytes and the lookup key changes from
+3136 to 504 bytes. This reduces repeated key construction/hashing work,
+not shader compilation itself or retained shader-state storage. Byte
+counts and equivalence checks alone do not establish a game FPS gain.
+
+Perf37 builds locally as version 66 / `1.2.9-pgr2-perf37` in `.dev.local`.
+The APK's v2 signature, existing certificate, package/version and actual
+arm64 counters pass verification. A single version-increasing installation
+completes and preserves lab HDD/preferences/EEPROM hashes and all nineteen
+diagnostic properties before gameplay starts. Its SHA-256 is
+`b2138e0265db9e121fdf8ad2a73f0cf26212f517b0b001aa58395438b8929c08`.
+
+### Perf37 moving-race validation and outcome
+
+Three unprofiled 3x starts use the same protected seed, native touch markers,
+24-second driving plan and settings as the perf36 scale comparison.
+Each installed APK is checked against the signed local artifact. The
+three cases measure 26.212/27.318/26.543 FPS over 3/4/4 complete flip
+windows. Pooled FPS is 26.736; eleven window averages range from
+22.342 to 28.821 FPS, all below 29.7. The earlier perf36 3x pool is
+26.750 FPS. These separate cohorts have differing contact/trajectories
+and are not an interleaved ABBA test. No sustained FPS gain is accepted,
+and stable original speed at Full HD or higher remains unverified.
+
+A separate profiled start includes 644 complete frame intervals within
+native touch bounds: median 34.587 ms, p95 53.299 ms and maximum
+85.111 ms. Thirty graphics-pipeline creation calls reach 46.931 ms;
+one shader compile takes 6.335 ms and texture decoding reaches 0.682 ms.
+Native presentation and GPU-fence waits reach 23.871/31.444 ms. These
+nested host timings show unresolved creation/synchronization hitches;
+they do not measure additive GPU time or isolate an instruction-translation
+speed limit. The compact lookup does not remove pipeline creation.
+
+All four mid/end pairs show coherent buildings, road, player car and HUD.
+Three moving rivals are visible in each mid capture and later advance
+along the course/minimap. Throttle and steering respond and release.
+Reviewed game clocks advance from 4.021--4.387 to 24.021--24.970 seconds.
+End captures are beside the right barrier; this covers short starts,
+not complete turns/laps or intermittent artifacts between captures.
+All end thermal statuses are zero. Captured emulator processes show no
+fatal exception, assertion or device loss.
+
+The lab's HDD/preferences/EEPROM hashes and nineteen diagnostic properties
+are restored and verified at 01:16:02 Madrid, before the 01:20:22 deadline.
+Perf37 remains installed and its emulator is stopped. The other Android
+profile is untouched. Fifty-four selected build inputs are checked against
+the committed sources; the delivery APK matches the installed artifact.
+Builds and tests remain local with Judge and CI/CD disabled. Raw game files,
+captures, profiles and caches remain private.
