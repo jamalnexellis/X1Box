@@ -2117,3 +2117,49 @@ properties are restored and verified at 21:24:50 Madrid, before the agreed
 21:26:22 end. Original EEPROM ownership is retained, emulators are stopped
 and the debugger forward is absent. The phone is released. Sparse copying
 remains opt-in; per-destination history correctness applies in both modes.
+
+### Perf33 render-worker drain correctness
+
+Review after the reported instability found that
+`pgraph_vk_render_thread_wait_idle` checked only the pending queue. The worker
+removes a command before executing it, so an empty queue can still have an
+active submission, display operation or flush. Callers use this drain before
+submitting auxiliary work, recycling resources and destroying draw state.
+Returning while the last command is executing defeats that synchronization.
+Vulkan requires external host synchronization of queue access for this
+renderer's ordinary queue; see the primary
+[vkQueueSubmit reference](https://docs.vulkan.org/refpages/latest/refpages/source/vkQueueSubmit.html).
+This source-level race is not yet established as the cause of PGR2's hitches.
+
+Perf33 tracks an active command under the queue mutex from removal through
+completion, including the explicit shutdown-command path. Drain waits on a
+condition while either queued or active work remains. Completion broadcasts
+under the same mutex, so two waiters and spurious wakeups cannot clear the
+predicate. Only the actual render worker bypasses the wait, using
+`qemu_thread_is_self`; a shared context flag describing another thread no
+longer permits the caller to bypass synchronization. GPU completion fences
+remain required at their existing callers; draining the host worker alone is
+not proof that a deferred submission has completed on the GPU. This is a
+generic correctness fix, with no game-name or device-specific branch.
+
+The shared production wait passes 200 rounds with two waiting threads,
+spurious broadcasts, additional queued work, the last command becoming active
+and completion before a waiter starts. The old queue-only check would accept
+the empty-but-active case. Separate host ASan/UBSan and ThreadSanitizer runs
+pass. The arm64 native fixture also passes all 200 rounds on the connected
+phone. These checks exercise host synchronization without Vulkan submissions;
+they do not establish game stability, graphics correctness or a speed gain.
+The local Android build, signature, certificate, package and native-library
+checks pass. The APK is version 62 / `1.2.9-pgr2-perf33`, separate `.dev.local`
+package, SHA-256
+`3f321c7731f73f4413a8f9453a1719af4426220488a5d8161e46b3146d7901d9`.
+
+A scheduler-trace driving test was prepared, but the phone was locked before
+inputs could be sent. No new PGR2 race, frame-time comparison or FPS result was
+obtained in this session. The previously reported perf32 measurements must
+not be attributed to perf33. The active installation's HDD, preferences and
+EEPROM hashes and all seventeen diagnostic properties were restored at
+22:14:09 Madrid on 2026-10-11. The older installation was absent in Android
+user 0 and present in another profile; that other profile was left untouched.
+Perf33 is prepared as an APK, pending the unlocked moving-race validation.
+No 100% sustained-speed claim is made; CI/CD remains disabled.

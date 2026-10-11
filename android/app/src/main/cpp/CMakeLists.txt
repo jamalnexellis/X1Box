@@ -1327,6 +1327,12 @@ add_executable(test-vertex-propagation EXCLUDE_FROM_ALL
 target_include_directories(test-vertex-propagation PRIVATE "${REPO_ROOT}")
 target_compile_options(test-vertex-propagation PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(test-render-idle EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-render-idle.c"
+)
+target_include_directories(test-render-idle PRIVATE "${REPO_ROOT}")
+target_compile_options(test-render-idle PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(test-cubemap-copy-vk EXCLUDE_FROM_ALL
   "${REPO_ROOT}/android/test/cpp/test-cubemap-copy-vk.c"
 )

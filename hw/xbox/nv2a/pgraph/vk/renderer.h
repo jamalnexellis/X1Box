@@ -680,11 +680,12 @@ typedef struct RenderThread {
     QemuMutex lock;
     QemuCond cond;
     QemuCond submitted_cond;
-    QemuEvent idle_event;
+    QemuCond idle_cond;
     QSIMPLEQ_HEAD(, RenderCommand) queue;
     bool shutdown;
     int queue_depth;
     bool blocking_submit_ack; /* Opt-in, latched before worker creation. */
+    bool active; /* Protected by lock, including after removal from queue. */
 } RenderThread;
 
 typedef struct TextureKey {

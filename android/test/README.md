@@ -112,3 +112,22 @@ With `debug.xemu.vk.stall_profile=1`, `XEMU_VERTEX_PROPAGATE` reports roughly
 five-second totals for rotations, copied bytes, the equivalent bounding-range
 bytes, copy runs and host copy time. Compare separate profiling-off moving
 races for FPS; fewer copied bytes alone do not establish faster emulation.
+
+# Render worker drain ordering
+
+`test-render-idle` exercises the same mutex/condition wait used by the render
+worker's callers. An empty queue with an active command must keep waiting.
+Two waiters, spurious broadcasts, queued work after completion, the last
+command leaving the queue and completion before a waiter starts are checked
+across 200 rounds. The former queue-only predicate is the negative control.
+
+```sh
+cc -std=c11 -I . -UNDEBUG -Wall -Wextra -Werror -pthread \
+  -fsanitize=address,undefined android/test/cpp/test-render-idle.c \
+  -o "$task_dir/render-idle-check"
+"$task_dir/render-idle-check"
+```
+
+Use `-fsanitize=thread` instead for a separate ThreadSanitizer run. The Android
+native target is `test-render-idle`. This fixture checks host drain ordering;
+it does not submit Vulkan work or establish game stability or a speed gain.

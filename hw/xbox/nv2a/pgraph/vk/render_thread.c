@@ -20,6 +20,7 @@
 #include "qemu/osdep.h"
 #include "renderer.h"
 #include "submission-ack.h"
+#include "render-idle.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -254,7 +255,6 @@ static void *render_thread_func(void *opaque)
         qemu_mutex_lock(&rt->lock);
 
         while (QSIMPLEQ_EMPTY(&rt->queue) && !rt->shutdown) {
-            qemu_event_set(&rt->idle_event);
             qemu_cond_wait(&rt->cond, &rt->lock);
         }
 
@@ -266,10 +266,12 @@ static void *render_thread_func(void *opaque)
         RenderCommand *cmd = QSIMPLEQ_FIRST(&rt->queue);
         QSIMPLEQ_REMOVE_HEAD(&rt->queue, entry);
         rt->queue_depth--;
+        rt->active = true;
 
         qemu_mutex_unlock(&rt->lock);
 
         nv2a_stall_record(NV2A_STALL_RENDER_QUEUE, cmd->queued_us, 0);
+        bool stop = false;
         switch (cmd->type) {
         case RCMD_FINISH:
             process_finish(r, cmd);
@@ -339,18 +341,23 @@ static void *render_thread_func(void *opaque)
         }
 
         case RCMD_SHUTDOWN:
-            g_free(cmd);
-            goto out;
+            stop = true;
+            break;
 
         default:
             break;
         }
 
         g_free(cmd);
-        qemu_event_set(&rt->idle_event);
+        qemu_mutex_lock(&rt->lock);
+        rt->active = false;
+        qemu_cond_broadcast(&rt->idle_cond);
+        qemu_mutex_unlock(&rt->lock);
+        if (stop) {
+            break;
+        }
     }
 
-out:
     return NULL;
 }
 
@@ -359,8 +366,6 @@ void pgraph_vk_render_thread_enqueue(PGRAPHVkState *r, RenderCommand *cmd)
     RenderThread *rt = &r->render_thread;
 
     cmd->queued_us = nv2a_stall_start();
-    qemu_event_reset(&rt->idle_event);
-
     qemu_mutex_lock(&rt->lock);
     QSIMPLEQ_INSERT_TAIL(&rt->queue, cmd, entry);
     rt->queue_depth++;
@@ -385,24 +390,16 @@ void pgraph_vk_render_thread_wait_submitted(PGRAPHVkState *r, int frame)
 
 void pgraph_vk_render_thread_wait_idle(PGRAPHVkState *r)
 {
-    if (r->is_render_thread_context) {
+    /* The shared context flag may describe a different thread. Only the
+     * actual worker may bypass this wait to avoid waiting for itself. */
+    if (qemu_thread_is_self(&r->render_thread.thread)) {
         return;
     }
 
     RenderThread *rt = &r->render_thread;
 
-    while (true) {
-        qemu_mutex_lock(&rt->lock);
-        bool idle = QSIMPLEQ_EMPTY(&rt->queue);
-        qemu_mutex_unlock(&rt->lock);
-
-        if (idle) {
-            return;
-        }
-
-        qemu_event_wait(&rt->idle_event);
-        qemu_event_reset(&rt->idle_event);
-    }
+    vk_render_wait_idle(&rt->lock, &rt->idle_cond, &rt->queue_depth,
+                        &rt->active);
 }
 
 void pgraph_vk_render_thread_init(PGRAPHVkState *r)
@@ -411,10 +408,11 @@ void pgraph_vk_render_thread_init(PGRAPHVkState *r)
     qemu_mutex_init(&rt->lock);
     qemu_cond_init(&rt->cond);
     qemu_cond_init(&rt->submitted_cond);
-    qemu_event_init(&rt->idle_event, false);
+    qemu_cond_init(&rt->idle_cond);
     QSIMPLEQ_INIT(&rt->queue);
     rt->shutdown = false;
     rt->queue_depth = 0;
+    rt->active = false;
 #ifdef __ANDROID__
     char property[PROP_VALUE_MAX] = {};
     __system_property_get("debug.xemu.vk.submit_wait", property);
@@ -449,5 +447,5 @@ void pgraph_vk_render_thread_shutdown(PGRAPHVkState *r)
     qemu_mutex_destroy(&rt->lock);
     qemu_cond_destroy(&rt->cond);
     qemu_cond_destroy(&rt->submitted_cond);
-    qemu_event_destroy(&rt->idle_event);
+    qemu_cond_destroy(&rt->idle_cond);
 }
