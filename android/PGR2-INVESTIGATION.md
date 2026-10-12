@@ -3105,3 +3105,74 @@ cycles. This motivates auditing redundant descriptor binds next. Dynamic
 uniform offsets, changed texture sets, pipeline layouts, command-buffer
 recording resets and queued/reordered draws must all remain correct; their
 necessary binds cannot simply be removed based on the sampled cost.
+
+### Perf42 exact descriptor command reuse
+
+Perf42 adds opt-in `debug.xemu.vk.desc_memo` / `XEMU_VK_DESC_MEMO` reuse of
+the last recorded single-set graphics descriptor command. Command buffer,
+pipeline-layout handle, descriptor-set handle, first-set index and copied
+dynamic-offset values must all match. New recordings, both graphics pipeline
+bind sites and push-descriptor writes invalidate the memo. Queued guest state
+does not restore this recorded-command state. Push-descriptor and bindless
+routes retain ordinary calls. This generic experiment leaves descriptor
+contents, layouts, shader interfaces, guest timing and fences unchanged; its
+default remains off.
+
+The sanitized host and native arm64 CPU fixtures each pass 57,344 checks,
+including changed offsets/sets/layouts, caller-array reuse, foreign writes and
+command-buffer handle reuse. Host llvmpipe and Adreno 830 each pass 131,072
+generated RGBA pixel comparisons in normal/memo/memo/normal order. Each memo
+round emits 18 and skips 110 of 128 requests; ordinary rounds emit all 128.
+The GPU fixture includes two dynamic UBOs, different descriptor sets,
+incompatible pipeline layouts, an intervening foreign bind and reset/reuse of
+the command buffer. These generated checks do not establish whole-game
+compatibility or the game's command-skip ratio.
+
+The separate local package builds as version 71 / `1.2.9-pgr2-perf42`.
+Signature, package/version, arm64 feature strings and installed identity pass.
+The delivered and installed APK SHA-256 is
+`6777b1204b4b18e1d4a35fbd8e01a6166be088b91ef759fb2914b0a8504503a9`.
+
+Four unprofiled moving starts compare memo off/on/on/off at 3x, with exact
+uniform updates enabled in all cases. They share a cold opaque Vulkan cache,
+actual driver identity, 185/193 warm shader modules and the 144-recipe seed.
+All recipes warm without failure or cache invalidation. Each case supplies
+four complete five-second flip windows within the same native twenty-four-second
+throttle/steering plan. Descriptive FPS is 25.845, 26.398, 25.953 and 25.704.
+Off/on pool to 25.774/26.176 FPS, an observed 1.56% difference; no causal FPS
+gain is accepted. All sixteen window means are below 29.7 FPS, with off ranges
+21.982--28.351 and on ranges 21.947--28.377. Sustained original 30 FPS remains
+unverified. Internal scanout is 1920x1440 and native presentation 2340x1080.
+
+A separate graphics-profiled pair, excluded from FPS inference, records 635
+complete moving frames per mode. Off emits 1,434,431 descriptor commands; on
+emits 1,267,900 and skips 169,227, or 11.78% of its own requests. Host durations
+for emitted calls are 1,259.030/1,209.860 ms and skipped calls total 12.682 ms
+on. These nested, instrumented durations are not an additive frame saving.
+Median intervals are 35.183/35.876 ms, p95 52.681/53.796 ms,
+p99 84.628/73.283 ms and maxima 97.373/83.050 ms. Intervals over 50 ms number
+42/43. The final on diagnostic ends at Android thermal status 1; the other
+five cases end at 0. This mismatch further limits stability comparisons.
+
+Each diagnostic creates 31 ordinary draw pipelines, with 30 valid driver-cache
+hits and one miss. Driver feedback totals 55.965/57.577 ms, with miss maxima
+25.821/25.314 ms. Complete-frame host creation durations use different
+boundaries and total 42.561/43.339 ms. Shader compilation occurs once, at
+5.113/11.242 ms. Texture decode maxima are 1.760/3.380 ms, presentation
+21.840/32.234 ms and GPU-fence waits 43.392/37.060 ms. Thus texture appearance
+does not by itself identify texture decoding as the principal stall.
+
+All six reviewed grid/mid/end sets show coherent road, buildings and HUD with
+the player and three rivals moving. Throttle/steering respond and the native
+helper records release. Countdown, contact and trajectories vary; coverage is
+short starts and the first-turn approach, not full laps or calibrated
+simulation speed. Captured emulator processes contain no fatal exception,
+assertion or device loss. No accepted case records a notification-panel-close
+event during measurement.
+
+The protected session restores its own fresh HDD/preferences/EEPROM and all
+twenty-four diagnostic properties at 18:19:29 Madrid, before its 18:21:58
+deadline. Verification checks record hashes, EEPROM ownership/mode, APK
+identity, the stopped emulator and the untouched original Android user-10
+installation. Raw game/cache/profile/capture data remain private. Builds and
+tests remain local with Judge/CI/CD disabled.

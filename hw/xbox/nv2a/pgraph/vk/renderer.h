@@ -25,6 +25,7 @@
 #include "present-reuse.h"
 #include "vertex-propagation.h"
 #include "vertex-input.h"
+#include "descriptor-bind.h"
 #include "pipeline-compile.h"
 #include "pipeline-recipe.h"
 #include "cubemap-copy.h"
@@ -1421,6 +1422,8 @@ typedef struct PGRAPHVkState {
     ShaderModuleInfo *quad_vert_module, *solid_frag_module;
     bool shader_bindings_changed;
     bool exact_uniform_updates;
+    bool descriptor_bind_memo;
+    NV2AVkDescriptorBind descriptor_bind_last;
     bool use_push_constants_for_uniform_attrs;
 
     ShaderState cached_shader_state;

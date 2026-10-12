@@ -468,3 +468,48 @@ check temporal load records; reject unsupported overlapping code intervals
 instead of silently assigning an old block. Keep sampling/JIT diagnostics out
 of unprofiled FPS comparisons and retain warning/sample-loss evidence. A
 kernel-symbol warning is not permission to change device security settings.
+
+# Exact descriptor-command reuse
+
+Vulkan descriptor bindings persist in their command buffer until replaced or
+disturbed, and dynamic offsets are consumed when the bind command is recorded;
+see [Khronos descriptor binding semantics](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdBindDescriptorSets.html).
+The opt-in Android property `debug.xemu.vk.desc_memo=1` or desktop environment
+variable `XEMU_VK_DESC_MEMO=1` omits a single graphics-set bind only when the
+command buffer, exact pipeline-layout handle, set number, descriptor handle,
+offset count and copied offsets match the last recorded bind. The default is
+off; push and bindless paths retain their existing binds.
+
+The renderer invalidates this state at every recording start, pipeline bind
+and push-descriptor write. It tracks actual recorded commands through merged
+and reordered draws; it is not rolled back with saved logical guest state.
+Compute and presentation use separate bind points or command buffers. No
+shader operation, draw, texture update or guest instruction is removed.
+Check the startup mode and use the separate `descriptor_bind` and
+`descriptor_bind_skip` profiler counters to measure calls actually avoided.
+Profiling is disabled for FPS comparisons.
+
+```sh
+cc -std=c11 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -I. android/test/cpp/test-descriptor-bind.c \
+  -o "$task_dir/descriptor-bind-check"
+"$task_dir/descriptor-bind-check"
+glslc android/test/cpp/vertex-input-empty.vert -o "$task_dir/descriptor.vert.spv"
+glslc android/test/cpp/test-descriptor-bind.frag -o "$task_dir/descriptor.frag.spv"
+cc -std=c11 -O2 -UNDEBUG -Wall -Wextra -Werror -I. \
+  android/test/cpp/test-descriptor-bind-vk.c -lvulkan \
+  -o "$task_dir/descriptor-bind-vk-check"
+"$task_dir/descriptor-bind-vk-check" "$task_dir/descriptor.vert.spv" \
+  "$task_dir/descriptor.frag.spv"
+```
+
+The Android native targets are `test-descriptor-bind` and
+`test-descriptor-bind-vk`. The CPU fixture performs 57,344 checks, including
+overwritten caller offsets, individual offset changes, layout/set/set-number
+changes, offset counts, invalidation and repeated command-buffer handles.
+Four GPU rounds compare 131,072 exact generated RGBA pixels while changing
+dynamic offsets, descriptor sets and incompatible pipeline layouts. Foreign
+binds intervene and the same command handle is reset between submissions.
+Each reused-state round emits 18 of 128 test requests and skips 110. Generated
+repeated requests establish limited state/pixel correctness; that synthetic
+skip ratio is not a game skip ratio, FPS improvement or full compatibility test.

@@ -2089,6 +2089,27 @@ static void push_vertex_attr_values(PGRAPHState *pg)
     }
 }
 
+static void memo_bind_graphics_set(PGRAPHVkState *r, VkPipelineLayout layout,
+    uint32_t first_set, const VkDescriptorSet *set,
+    uint32_t offset_count, const uint32_t *offsets)
+{
+    int64_t start = nv2a_stall_start();
+    /* Keep push/bindless routes on their existing behavior. The plain route
+     * owns one exact last graphics command, including queued offset rebinds. */
+    bool memo = r->descriptor_bind_memo && !r->push_descriptors_supported;
+#if OPT_BINDLESS_TEXTURES
+    memo = memo && !r->bindless_textures_supported;
+#endif
+    if (memo && !nv2a_vk_descriptor_bind_required(&r->descriptor_bind_last,
+            r->command_buffer, layout, first_set, *set, offset_count, offsets)) {
+        nv2a_stall_record(NV2A_STALL_DESCRIPTOR_BIND_SKIP, start, 0);
+        return;
+    }
+    vkCmdBindDescriptorSets(r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        layout, first_set, 1, set, offset_count, offsets);
+    nv2a_stall_record(NV2A_STALL_DESCRIPTOR_BIND, start, 0);
+}
+
 static void push_texture_descriptors(PGRAPHState *pg)
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
@@ -2104,6 +2125,7 @@ static void push_texture_descriptors(PGRAPHState *pg)
             .pImageInfo = &r->push_tex_infos[i],
         };
     }
+    nv2a_vk_descriptor_bind_invalidate(&r->descriptor_bind_last);
     vkCmdPushDescriptorSetKHR(r->command_buffer,
                               VK_PIPELINE_BIND_POINT_GRAPHICS,
                               r->pipeline_binding->layout,
@@ -2123,30 +2145,30 @@ static void bind_descriptor_sets(PGRAPHState *pg)
 #if OPT_BINDLESS_TEXTURES
     if (r->bindless_textures_supported) {
         assert(r->ubo_descriptor_set_index >= 1);
-        vkCmdBindDescriptorSets(
-            r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-            r->pipeline_binding->layout, 1, 1,
+        memo_bind_graphics_set(r, r->pipeline_binding->layout,
+            1,
             &r->ubo_descriptor_sets[r->ubo_descriptor_set_index - 1],
-            2, dynamic_offsets);
+            2,
+            dynamic_offsets);
     } else
 #endif
     if (r->push_descriptors_supported) {
         assert(r->push_ubo_set_index >= 1);
-        vkCmdBindDescriptorSets(
-            r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-            r->pipeline_binding->layout, 1, 1,
+        memo_bind_graphics_set(r, r->pipeline_binding->layout,
+            1,
             &r->push_ubo_sets[r->push_ubo_set_index - 1],
-            2, dynamic_offsets);
+            2,
+            dynamic_offsets);
         if (r->push_tex_dirty) {
             push_texture_descriptors(pg);
         }
     } else {
         assert(r->descriptor_set_index >= 1);
-        vkCmdBindDescriptorSets(
-            r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-            r->pipeline_binding->layout, 0, 1,
+        memo_bind_graphics_set(r, r->pipeline_binding->layout,
+            0,
             &r->descriptor_sets[r->descriptor_set_index - 1],
-            2, dynamic_offsets);
+            2,
+            dynamic_offsets);
     }
 }
 
@@ -2156,9 +2178,11 @@ static void bind_bindless_set(PGRAPHState *pg)
     PGRAPHVkState *r = pg->vk_renderer_state;
     if (!r->bindless_textures_supported) return;
 
-    vkCmdBindDescriptorSets(r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            r->pipeline_binding->layout, 0, 1,
-                            &r->bindless_descriptor_set, 0, NULL);
+    memo_bind_graphics_set(r, r->pipeline_binding->layout,
+            0,
+            &r->bindless_descriptor_set,
+            0,
+            NULL);
 }
 
 static void push_texture_indices(PGRAPHState *pg)
@@ -3064,6 +3088,7 @@ void pgraph_vk_begin_command_buffer(PGRAPHState *pg)
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
+    nv2a_vk_descriptor_bind_invalidate(&r->descriptor_bind_last);
     VK_CHECK(vkBeginCommandBuffer(r->command_buffer,
                                   &command_buffer_begin_info));
     r->command_buffer_start_time = pg->draw_time;
@@ -3723,6 +3748,7 @@ static void begin_draw(PGRAPHState *pg)
 
     if (must_bind_pipeline) {
         nv2a_profile_inc_counter(NV2A_PROF_PIPELINE_BIND);
+        nv2a_vk_descriptor_bind_invalidate(&r->descriptor_bind_last);
         vkCmdBindPipeline(r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           r->pipeline_binding->pipeline);
         r->pipeline_binding_changed = false;
@@ -4432,28 +4458,28 @@ static void rebind_ubo_dynamic_offsets(PGRAPHState *pg, uint32_t off0,
 #if OPT_BINDLESS_TEXTURES
     if (r->bindless_textures_supported) {
         assert(r->ubo_descriptor_set_index >= 1);
-        vkCmdBindDescriptorSets(
-            r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-            r->pipeline_binding->layout, 1, 1,
+        memo_bind_graphics_set(r, r->pipeline_binding->layout,
+            1,
             &r->ubo_descriptor_sets[r->ubo_descriptor_set_index - 1],
-            2, dyn_off);
+            2,
+            dyn_off);
         return;
     }
 #endif
     if (r->push_descriptors_supported) {
         assert(r->push_ubo_set_index >= 1);
-        vkCmdBindDescriptorSets(
-            r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-            r->pipeline_binding->layout, 1, 1,
+        memo_bind_graphics_set(r, r->pipeline_binding->layout,
+            1,
             &r->push_ubo_sets[r->push_ubo_set_index - 1],
-            2, dyn_off);
+            2,
+            dyn_off);
     } else {
         assert(r->descriptor_set_index >= 1);
-        vkCmdBindDescriptorSets(
-            r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-            r->pipeline_binding->layout, 0, 1,
+        memo_bind_graphics_set(r, r->pipeline_binding->layout,
+            0,
             &r->descriptor_sets[r->descriptor_set_index - 1],
-            2, dyn_off);
+            2,
+            dyn_off);
     }
 }
 
@@ -5240,6 +5266,7 @@ static void emit_reorder_entry(PGRAPHState *pg, ReorderWindowEntry *e,
 
     if (pipeline_changed) {
         nv2a_profile_inc_counter(NV2A_PROF_PIPELINE_BIND);
+        nv2a_vk_descriptor_bind_invalidate(&r->descriptor_bind_last);
         vkCmdBindPipeline(r->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           e->pipeline_binding->pipeline);
         e->pipeline_binding->draw_time = pg->draw_time;
@@ -5405,10 +5432,11 @@ static void emit_reorder_entry(PGRAPHState *pg, ReorderWindowEntry *e,
 #else
         uint32_t set_num = e->rw_use_push_descriptors ? 1 : 0;
 #endif
-        vkCmdBindDescriptorSets(r->command_buffer,
-                                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                e->layout, set_num, 1, &e->descriptor_set,
-                                2, e->dynamic_offsets);
+        memo_bind_graphics_set(r, e->layout,
+            set_num,
+            &e->descriptor_set,
+            2,
+            e->dynamic_offsets);
     }
 
     if (e->rw_use_push_descriptors &&
@@ -5426,6 +5454,7 @@ static void emit_reorder_entry(PGRAPHState *pg, ReorderWindowEntry *e,
                 .pImageInfo = &e->rw_push_tex_infos[i],
             };
         }
+        nv2a_vk_descriptor_bind_invalidate(&r->descriptor_bind_last);
         vkCmdPushDescriptorSetKHR(r->command_buffer,
                                   VK_PIPELINE_BIND_POINT_GRAPHICS,
                                   e->layout,
@@ -5547,10 +5576,11 @@ static void flush_reorder_window_internal(NV2AState *d)
 
 #if OPT_BINDLESS_TEXTURES
     if (r->bindless_textures_supported && !r->bindless_set_bound) {
-        vkCmdBindDescriptorSets(r->command_buffer,
-                                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                w->entries[0].layout, 0, 1,
-                                &r->bindless_descriptor_set, 0, NULL);
+        memo_bind_graphics_set(r, w->entries[0].layout,
+            0,
+            &r->bindless_descriptor_set,
+            0,
+            NULL);
         r->bindless_set_bound = true;
     }
 #endif
