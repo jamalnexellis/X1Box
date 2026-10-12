@@ -409,11 +409,16 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
     char direct_upload[PROP_VALUE_MAX] = {0};
     __system_property_get("debug.xemu.vk.direct_upload", direct_upload);
     r->direct_draw_upload = strcmp(direct_upload, "1") == 0;
+    r->per_slot_draw_buffers = r->direct_draw_upload || strcmp(direct_upload, "2") == 0;
     __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
-                        "direct fenced draw upload=%d", r->direct_draw_upload);
+                        "fenced draw upload mode=%d direct=%d",
+                        r->direct_draw_upload ? 1 : r->per_slot_draw_buffers ? 2 : 0,
+                        r->direct_draw_upload);
 #else
     const char *direct_upload = getenv("XEMU_VK_DIRECT_UPLOAD");
     r->direct_draw_upload = direct_upload && strcmp(direct_upload, "1") == 0;
+    r->per_slot_draw_buffers = r->direct_draw_upload ||
+        (direct_upload && strcmp(direct_upload, "2") == 0);
 #endif
 
     const size_t mib = 1024 * 1024;
@@ -587,7 +592,7 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
 
     for (int i = 0; i < BUFFER_COUNT; i++) {
         if (is_per_frame_staging_buffer(i) ||
-            (r->direct_draw_upload &&
+            (r->per_slot_draw_buffers &&
              (i == BUFFER_INDEX || i == BUFFER_VERTEX_INLINE || i == BUFFER_UNIFORM))) {
             VK_LOG("buffer_init: skip superseded global %s size=%zu",
                    buffer_names[i], r->storage_buffers[i].buffer_size);
@@ -728,6 +733,21 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
             }
         }
 
+        if (r->per_slot_draw_buffers && !r->direct_draw_upload) {
+            fs->index_gpu = (StorageBuffer){.alloc_info = device_alloc_create_info,
+                .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | nv2a_vk_draw_upload_usage(NV2A_VK_UPLOAD_INDEX), .buffer_size = idx_cap};
+            fs->vertex_inline_gpu = (StorageBuffer){.alloc_info = device_alloc_create_info,
+                .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | nv2a_vk_draw_upload_usage(NV2A_VK_UPLOAD_VERTEX), .buffer_size = vtx_cap};
+            fs->uniform_gpu = (StorageBuffer){.alloc_info = device_alloc_create_info,
+                .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | nv2a_vk_draw_upload_usage(NV2A_VK_UPLOAD_UNIFORM), .buffer_size = uni_cap};
+            StorageBuffer *gpu_bufs[] = {&fs->index_gpu, &fs->vertex_inline_gpu, &fs->uniform_gpu};
+            const char *gpu_names[] = {"INDEX_GPU", "VTXINLINE_GPU", "UNIFORM_GPU"};
+            for (int j = 0; j < ARRAY_SIZE(gpu_bufs); j++) {
+                snprintf(name, sizeof(name), "FRAME%d_%s", i, gpu_names[j]);
+                if (!create_buffer(pg, gpu_bufs[j], name, errp)) { goto fail; }
+            }
+        }
+
         fs->uploaded_bitmap = bitmap_new(r->bitmap_size);
         if (!fs->uploaded_bitmap) {
             error_setg(errp, "Failed to allocate per-frame uploaded bitmap");
@@ -751,7 +771,8 @@ fail:
         FrameStagingState *fs = &r->frame_staging[i];
         StorageBuffer *bufs[] = {
             &fs->index_staging, &fs->vertex_inline_staging,
-            &fs->uniform_staging, &fs->staging_src, &fs->vertex_ram
+            &fs->uniform_staging, &fs->staging_src, &fs->vertex_ram,
+            &fs->index_gpu, &fs->vertex_inline_gpu, &fs->uniform_gpu
         };
         for (int j = 0; j < ARRAY_SIZE(bufs); j++) {
             if (bufs[j]->mapped) {
@@ -787,7 +808,8 @@ void pgraph_vk_finalize_buffers(NV2AState *d)
         FrameStagingState *fs = &r->frame_staging[i];
         StorageBuffer *bufs[] = {
             &fs->index_staging, &fs->vertex_inline_staging,
-            &fs->uniform_staging, &fs->staging_src, &fs->vertex_ram
+            &fs->uniform_staging, &fs->staging_src, &fs->vertex_ram,
+            &fs->index_gpu, &fs->vertex_inline_gpu, &fs->uniform_gpu
         };
         for (int j = 0; j < ARRAY_SIZE(bufs); j++) {
             if (bufs[j]->mapped) {

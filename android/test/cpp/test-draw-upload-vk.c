@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "hw/xbox/nv2a/pgraph/vk/draw-upload.h"
+#include "hw/xbox/nv2a/pgraph/vk/draw-submit.h"
 
 #define CHECK(x) do { VkResult result_=(x); if(result_!=VK_SUCCESS) { fprintf(stderr,"%s: %d\n",#x,result_); abort(); } } while(0)
 #define W 32u
@@ -136,12 +137,15 @@ int main(int argc,char **argv)
     VkCommandPoolCreateInfo cp={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,.queueFamilyIndex=family};
     VkCommandPool command_pool; CHECK(vkCreateCommandPool(device,&cp,NULL,&command_pool));
     VkCommandBufferAllocateInfo ca={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=command_pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=SLOTS};
-    VkCommandBuffer cmds[SLOTS]; CHECK(vkAllocateCommandBuffers(device,&ca,cmds));
+    VkCommandBuffer cmds[SLOTS],aux_cmds[SLOTS]; CHECK(vkAllocateCommandBuffers(device,&ca,cmds)); CHECK(vkAllocateCommandBuffers(device,&ca,aux_cmds));
+    VkSemaphore aux_done[SLOTS],chain; VkSemaphoreCreateInfo semaphore_info={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    for(unsigned slot=0;slot<SLOTS;slot++) CHECK(vkCreateSemaphore(device,&semaphore_info,NULL,&aux_done[slot]));
     VkFence fences[SLOTS]; VkFenceCreateInfo fi={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     for(unsigned slot=0;slot<SLOTS;slot++) CHECK(vkCreateFence(device,&fi,NULL,&fences[slot]));
     unsigned exact_pixels=0;
     for(unsigned direct=0;direct<=1;direct++)for(unsigned slots=1;slots<=3;slots++) {
         bool in_flight[SLOTS]={0};
+        CHECK(vkCreateSemaphore(device,&semaphore_info,NULL,&chain));
         for(unsigned slot=0;slot<slots;slot++) {
             VkBuffer selected=direct?uploads[slot][NV2A_VK_UPLOAD_UNIFORM]:destinations[slot][NV2A_VK_UPLOAD_UNIFORM];
             VkDescriptorBufferInfo infos[2]={{selected,0,16},{selected,0,16}};
@@ -151,8 +155,8 @@ int main(int argc,char **argv)
         }
         for(unsigned pass_index=0;pass_index<N;pass_index++) {
             unsigned slot=pass_index%slots;
-            if(in_flight[slot]) CHECK(vkWaitForFences(device,1,&fences[slot],VK_TRUE,UINT64_MAX));
-            CHECK(vkResetFences(device,1,&fences[slot])); CHECK(vkResetCommandBuffer(cmds[slot],0));
+            if(in_flight[slot]) CHECK(vkWaitForFences(device,1,&fences[slot],VK_TRUE,UINT64_C(5000000000)));
+            CHECK(vkResetFences(device,1,&fences[slot])); CHECK(vkResetCommandBuffer(cmds[slot],0)); CHECK(vkResetCommandBuffer(aux_cmds[slot],0));
             unsigned variant=pass_index%2;
             uint16_t indices[3]={(uint16_t)(variant*3),(uint16_t)(variant*3+1),(uint16_t)(variant*3+2)};
             memcpy(mapped[slot][NV2A_VK_UPLOAD_INDEX],indices,sizeof(indices));
@@ -172,7 +176,7 @@ int main(int argc,char **argv)
                 VkMappedMemoryRange flush={.sType=VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,.memory=upload_memory[slot][type],.size=VK_WHOLE_SIZE};
                 CHECK(vkFlushMappedMemoryRanges(device,1,&flush));
             }
-            VkCommandBuffer cmd=cmds[slot];
+            VkCommandBuffer cmd=aux_cmds[slot];
             VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO}; CHECK(vkBeginCommandBuffer(cmd,&begin));
             for(unsigned type=0;type<TYPES;type++) {
                 if(direct) nv2a_vk_draw_upload_barrier(cmd,uploads[slot][type],sizes[type],(NV2AVkDrawUpload)type);
@@ -184,6 +188,7 @@ int main(int argc,char **argv)
                     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,NULL,1,&gpu,0,NULL);
                 }
             }
+            CHECK(vkEndCommandBuffer(cmd)); cmd=cmds[slot]; CHECK(vkBeginCommandBuffer(cmd,&begin));
             vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,pipelines[0]);
             uint32_t offsets[2]={0,(uint32_t)stride}; vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,layouts[0],0,1,&sets[slot],2,offsets);
             VkBuffer vertex=direct?uploads[slot][NV2A_VK_UPLOAD_VERTEX]:destinations[slot][NV2A_VK_UPLOAD_VERTEX]; VkDeviceSize offset=0;
@@ -197,16 +202,19 @@ int main(int argc,char **argv)
             vkCmdCopyImageToBuffer(cmd,image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,readback,1,&copy);
             VkBufferMemoryBarrier read={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.buffer=readback,.offset=copy.bufferOffset,.size=W*W*4};
             vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&read,0,NULL); CHECK(vkEndCommandBuffer(cmd));
-            VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&cmd}; CHECK(vkQueueSubmit(queue,1,&submit,fences[slot]));
+            NV2AVkDrawSubmit submit;
+            nv2a_vk_draw_submit_init(&submit,aux_cmds[slot],cmd,aux_done[slot],chain,pass_index>0,true,pass_index%4!=0);
+            CHECK(vkQueueSubmit(queue,2,submit.infos,fences[slot]));
             in_flight[slot]=true;
         }
-        for(unsigned slot=0;slot<slots;slot++) CHECK(vkWaitForFences(device,1,&fences[slot],VK_TRUE,UINT64_MAX));
+        for(unsigned slot=0;slot<slots;slot++) CHECK(vkWaitForFences(device,1,&fences[slot],VK_TRUE,UINT64_C(5000000000)));
         VkMappedMemoryRange invalidate={.sType=VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,.memory=rm,.size=VK_WHOLE_SIZE}; CHECK(vkInvalidateMappedMemoryRanges(device,1,&invalidate));
         for(unsigned i=0;i<N;i++)for(unsigned p=0;p<W*W;p++)for(unsigned c=0;c<4;c++)
             assert(((uint8_t*)pixels)[(i*W*W+p)*4+c]==value(i,i%2,c)+value(5,i,c)+value(7,i,c));
+        vkDestroySemaphore(device,chain,NULL);
         exact_pixels+=N*W*W; printf("PASS direct=%u slots=%u: %u exact RGBA pixels, indexed/indirect draws and both shader uniform stages\n",direct,slots,N*W*W);
     }
-    for(unsigned slot=0;slot<SLOTS;slot++) vkDestroyFence(device,fences[slot],NULL);
+    for(unsigned slot=0;slot<SLOTS;slot++) {vkDestroyFence(device,fences[slot],NULL);vkDestroySemaphore(device,aux_done[slot],NULL);}
     vkDestroyCommandPool(device,command_pool,NULL); vkDestroyPipeline(device,pipelines[0],NULL); vkDestroyPipeline(device,pipelines[1],NULL);
     vkDestroyShaderModule(device,vert,NULL); vkDestroyShaderModule(device,frag,NULL); vkDestroyFramebuffer(device,framebuffer,NULL); vkDestroyImageView(device,view,NULL);
     vkDestroyImage(device,image,NULL); vkFreeMemory(device,im,NULL); vkDestroyRenderPass(device,pass,NULL); vkUnmapMemory(device,rm); vkDestroyBuffer(device,readback,NULL); vkFreeMemory(device,rm,NULL);

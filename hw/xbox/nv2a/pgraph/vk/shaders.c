@@ -791,7 +791,7 @@ void pgraph_vk_update_descriptor_sets(PGRAPHState *pg)
     }
 
     if (need_new_descriptor_set &&
-        !(r->direct_draw_upload && r->need_descriptor_rebind) &&
+        !(r->per_slot_draw_buffers && r->need_descriptor_rebind) &&
         !r->shader_bindings_changed && !r->texture_bindings_changed &&
         *ds_index_ptr > 0) {
         OPT_STAT_INC(desc_rebind_skips);

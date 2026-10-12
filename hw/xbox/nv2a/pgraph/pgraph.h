@@ -342,20 +342,23 @@ extern uint8_t pgraph_reg_category_table[];
 extern uint32_t pgraph_reg_dynamic_mask_table[];
 void pgraph_init_reg_dynamic_masks(bool eds1, bool eds3);
 
+#include "status-snapshot.h"
+
 static inline uint32_t pgraph_reg_r(PGRAPHState *pg, unsigned int r)
 {
     assert(r % 4 == 0);
-    return pg->regs_[r];
+    return r == NV_PGRAPH_FIFO ? nv2a_status_read(&pg->regs_[r]) : pg->regs_[r];
 }
 
 static inline void pgraph_reg_w(PGRAPHState *pg, unsigned int r, uint32_t v)
 {
     assert(r % 4 == 0);
-    if (pg->regs_[r] != v) {
+    uint32_t old = pgraph_reg_r(pg, r);
+    if (old != v) {
         bitmap_set(pg->regs_dirty, r / sizeof(uint32_t), 1);
         uint8_t cat = pgraph_reg_category_table[r / 4];
         uint32_t dyn_mask = pgraph_reg_dynamic_mask_table[r / 4];
-        uint32_t non_dyn_changed = (pg->regs_[r] ^ v) & ~dyn_mask;
+        uint32_t non_dyn_changed = (old ^ v) & ~dyn_mask;
         if (cat & REG_CAT_SHADER) {
             if (non_dyn_changed) pg->shader_state_gen++;
         }
@@ -368,7 +371,8 @@ static inline void pgraph_reg_w(PGRAPHState *pg, unsigned int r, uint32_t v)
             pg->non_dynamic_reg_gen++;
         pg->any_reg_gen++;
     }
-    pg->regs_[r] = v;
+    if (r == NV_PGRAPH_FIFO) { nv2a_status_store(&pg->regs_[r], v); }
+    else { pg->regs_[r] = v; }
 }
 
 /*
@@ -406,7 +410,8 @@ static inline void pgraph_reg_w_atomic(PGRAPHState *pg, unsigned int r,
                                __ATOMIC_RELAXED);
         __atomic_fetch_add(&pg->any_reg_gen, 1, __ATOMIC_RELAXED);
     }
-    qatomic_set(&pg->regs_[r], v);
+    if (r == NV_PGRAPH_FIFO) { nv2a_status_store(&pg->regs_[r], v); }
+    else { qatomic_set(&pg->regs_[r], v); }
 }
 
 void pgraph_clear_dirty_reg_map(PGRAPHState *pg);

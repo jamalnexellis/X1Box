@@ -1292,6 +1292,11 @@ target_include_directories(test-draw-upload-vk PRIVATE "${REPO_ROOT}")
 target_compile_options(test-draw-upload-vk PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_link_libraries(test-draw-upload-vk PRIVATE vulkan)
 
+add_executable(test-status-snapshot EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-status-snapshot.c")
+target_include_directories(test-status-snapshot PRIVATE "${REPO_ROOT}")
+target_compile_options(test-status-snapshot PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(test-uniform-value-compare EXCLUDE_FROM_ALL
   "${REPO_ROOT}/android/test/cpp/test-uniform-value-compare.c")
 target_include_directories(test-uniform-value-compare PRIVATE "${REPO_ROOT}")

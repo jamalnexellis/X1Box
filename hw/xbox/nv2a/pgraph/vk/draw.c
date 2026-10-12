@@ -22,6 +22,7 @@
 #include "qemu/error-report.h"
 #include "renderer.h"
 #include "draw-upload.h"
+#include "draw-submit.h"
 #include "hw/xbox/nv2a/pgraph/lag-trace-buffer.h"
 #include "pipeline-key-compare.h"
 #include "system/physmem.h"
@@ -2785,13 +2786,18 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
 
         VK_CHECK(vkEndCommandBuffer(r->command_buffer));
 
+        /* A newly opened aux buffer below contains only this fenced slot's
+         * uploads. Existing aux work may read/write shared images and keeps
+         * the original prior-submission dependency. */
+        bool independent_aux = r->per_slot_draw_buffers &&
+            !r->in_aux_command_buffer && r->num_deferred_downloads == 0;
         VkCommandBuffer cmd = pgraph_vk_ensure_nondraw_commands(pg);
 
         /* WAR barrier: previous submissions may still be reading from shared
          * destination buffers (UNIFORM, INDEX, VERTEX_INLINE, VERTEX_RAM).
          * The staging sync below overwrites these from offset 0. Ensure all
          * previous reads complete before we write. */
-        if (!r->direct_draw_upload) {
+        if (!r->per_slot_draw_buffers) {
             VkMemoryBarrier war_barrier = {
                 .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                 .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT |
@@ -2871,7 +2877,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
         bool deferred = (finish_reason == VK_FINISH_REASON_FLIP_STALL ||
                          finish_reason == VK_FINISH_REASON_PRESENTING ||
                          finish_reason == VK_FINISH_REASON_STALLED);
-        if (g_xemu_fast_fences || r->direct_draw_upload) {
+        if (g_xemu_fast_fences || r->per_slot_draw_buffers) {
             deferred = deferred ||
                 finish_reason == VK_FINISH_REASON_NEED_BUFFER_SPACE ||
                 finish_reason == VK_FINISH_REASON_VERTEX_BUFFER_DIRTY;
@@ -2880,45 +2886,17 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
         if (r->is_render_thread_context) {
             /* Render thread path: always synchronous, consume chain if
              * pending but never signal it. */
-            VkSemaphore chain_wait_sems[1];
-            VkPipelineStageFlags chain_wait_stages[1];
-            uint32_t chain_wait_count = 0;
-            if (r->stall_chain_pending) {
-                chain_wait_sems[0] = r->stall_chain_semaphore;
-                chain_wait_stages[0] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-                chain_wait_count = 1;
-                r->stall_chain_pending = false;
-            }
-
-            VkSemaphore aux_draw_semaphore =
-                r->aux_draw_semaphores[r->current_frame];
-            VkPipelineStageFlags aux_wait_stage =
-                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-            VkSubmitInfo submit_infos[] = {
-                {
-                    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                    .waitSemaphoreCount = chain_wait_count,
-                    .pWaitSemaphores = chain_wait_sems,
-                    .pWaitDstStageMask = chain_wait_stages,
-                    .commandBufferCount = 1,
-                    .pCommandBuffers = &r->aux_command_buffer,
-                    .signalSemaphoreCount = 1,
-                    .pSignalSemaphores = &aux_draw_semaphore,
-                },
-                {
-                    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                    .waitSemaphoreCount = 1,
-                    .pWaitSemaphores = &aux_draw_semaphore,
-                    .pWaitDstStageMask = &aux_wait_stage,
-                    .commandBufferCount = 1,
-                    .pCommandBuffers = &r->command_buffer,
-                },
-            };
+            bool chain_wait = r->stall_chain_pending;
+            r->stall_chain_pending = false;
+            NV2AVkDrawSubmit submit;
+            nv2a_vk_draw_submit_init(&submit, r->aux_command_buffer,
+                r->command_buffer, r->aux_draw_semaphores[r->current_frame],
+                r->stall_chain_semaphore, chain_wait, false, independent_aux);
 
             int64_t queue_start = nv2a_stall_start();
             vkResetFences(r->device, 1, &r->command_buffer_fence);
-            VK_CHECK(vkQueueSubmit(r->queue, ARRAY_SIZE(submit_infos),
-                                   submit_infos,
+            VK_CHECK(vkQueueSubmit(r->queue, ARRAY_SIZE(submit.infos),
+                                   submit.infos,
                                    r->command_buffer_fence));
             nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, queue_start, 0);
             nv2a_lag_event(NV2A_LAG_SUBMIT, queue_start,
@@ -2991,6 +2969,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
             cmd->finish.chain_semaphore = r->stall_chain_semaphore;
             cmd->finish.chain_wait = r->stall_chain_pending;
             cmd->finish.chain_signal = deferred;
+            cmd->finish.independent_aux = independent_aux;
             if (deferred) {
                 r->stall_chain_pending = true;
                 OPT_STAT_INC(stall_deferred);

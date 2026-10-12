@@ -292,6 +292,9 @@ typedef struct FrameStagingState {
     StorageBuffer index_staging;
     StorageBuffer vertex_inline_staging;
     StorageBuffer uniform_staging;
+    StorageBuffer index_gpu;
+    StorageBuffer vertex_inline_gpu;
+    StorageBuffer uniform_gpu;
     StorageBuffer staging_src;
     StorageBuffer vertex_ram;
     VkDeviceSize vertex_ram_flush_min;
@@ -671,6 +674,7 @@ typedef struct RenderCommand {
             VkSemaphore chain_semaphore;
             bool chain_wait;
             bool chain_signal;
+            bool independent_aux;
             SubmitPostFenceCallback post_fence_cb;
             void *post_fence_opaque;
         } finish;
@@ -1290,6 +1294,7 @@ typedef struct PGRAPHVkState {
 
     FrameStagingState frame_staging[NUM_SUBMIT_FRAMES];
     bool direct_draw_upload;
+    bool per_slot_draw_buffers;
     struct {
         int64_t started_us;
         uint64_t rotations, copied_bytes, bounding_bytes, runs, copy_us;
@@ -1544,14 +1549,17 @@ static inline VkResult pgraph_vk_wait_for_fences(PGRAPHVkState *r, uint32_t coun
 
 static inline StorageBuffer *get_staging_buffer(PGRAPHVkState *r, int buffer_id)
 {
-    if (r->direct_draw_upload) {
+    if (r->per_slot_draw_buffers) {
         switch (buffer_id) {
         case BUFFER_INDEX:
-            return &r->frame_staging[r->current_frame].index_staging;
+            return r->direct_draw_upload ? &r->frame_staging[r->current_frame].index_staging :
+                &r->frame_staging[r->current_frame].index_gpu;
         case BUFFER_VERTEX_INLINE:
-            return &r->frame_staging[r->current_frame].vertex_inline_staging;
+            return r->direct_draw_upload ? &r->frame_staging[r->current_frame].vertex_inline_staging :
+                &r->frame_staging[r->current_frame].vertex_inline_gpu;
         case BUFFER_UNIFORM:
-            return &r->frame_staging[r->current_frame].uniform_staging;
+            return r->direct_draw_upload ? &r->frame_staging[r->current_frame].uniform_staging :
+                &r->frame_staging[r->current_frame].uniform_gpu;
         default:
             break;
         }

@@ -23,6 +23,7 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <sys/system_properties.h>
 #endif
 
 #include "hw/xbox/nv2a/nv2a_int.h"
@@ -744,6 +745,24 @@ coalesce_done:
 
 NV2AState *g_nv2a;
 
+static bool pgraph_status_snapshot_enabled(void)
+{
+#ifdef __ANDROID__
+    static int enabled = -1;
+    if (enabled < 0) {
+        char prop[PROP_VALUE_MAX] = {0};
+        __system_property_get("debug.xemu.pgraph.status_read", prop);
+        enabled = strcmp(prop, "1") == 0;
+        __android_log_print(ANDROID_LOG_INFO, "xemu-lag",
+                            "PGRAPH status snapshot reads=%d", enabled);
+    }
+    return enabled;
+#else
+    const char *mode = getenv("XEMU_PGRAPH_STATUS_READ");
+    return mode && strcmp(mode, "1") == 0;
+#endif
+}
+
 uint64_t pgraph_read(void *opaque, hwaddr addr, unsigned int size)
 {
     NV2AState *d = (NV2AState *)opaque;
@@ -766,6 +785,23 @@ uint64_t pgraph_read(void *opaque, hwaddr addr, unsigned int size)
         return fence;
     }
 
+    /* These reads have no side effect. Snapshot a single published status
+     * word instead of blocking behind PFIFO shader compilation/GPU waits.
+     * RDI_DATA still takes the lock because it advances an indirect index.
+     * Interrupt acknowledgment and FIFO writes retain their original locks. */
+    if (size == sizeof(uint32_t) && pgraph_status_snapshot_enabled()) {
+        uint32_t status;
+        switch (addr) {
+        case NV_PGRAPH_INTR: status = nv2a_status_read(&pg->pending_interrupts); break;
+        case NV_PGRAPH_INTR_EN: status = nv2a_status_read(&pg->enabled_interrupts); break;
+        case NV_PGRAPH_FIFO: status = nv2a_status_read(&pg->regs_[NV_PGRAPH_FIFO]); break;
+        default: goto locked_read;
+        }
+        if (unlikely(nv2a_lag_enabled)) { nv2a_lag_mmio_read(addr, status); }
+        nv2a_reg_log_read(NV_PGRAPH, addr, size, status);
+        return status;
+    }
+locked_read:
     int64_t lag_lock = nv2a_lag_start();
     qemu_mutex_lock(&pg->lock);
     nv2a_lag_event(NV2A_LAG_MMIO_LOCK, lag_lock, 0, 0, addr, 1, 0);
@@ -773,10 +809,10 @@ uint64_t pgraph_read(void *opaque, hwaddr addr, unsigned int size)
     uint64_t r = 0;
     switch (addr) {
     case NV_PGRAPH_INTR:
-        r = pg->pending_interrupts;
+        r = nv2a_status_read(&pg->pending_interrupts);
         break;
     case NV_PGRAPH_INTR_EN:
-        r = pg->enabled_interrupts;
+        r = nv2a_status_read(&pg->enabled_interrupts);
         break;
     case NV_PGRAPH_RDI_DATA: {
         unsigned int select = PG_GET_MASK(NV_PGRAPH_RDI_INDEX,
@@ -831,18 +867,18 @@ void pgraph_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size)
 
     switch (addr) {
     case NV_PGRAPH_INTR:
-        pg->pending_interrupts &= ~val;
+        nv2a_status_ack(&pg->pending_interrupts, (uint32_t)val);
 
-        if (!(pg->pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
+        if (!(nv2a_status_read(&pg->pending_interrupts) & NV_PGRAPH_INTR_ERROR)) {
             pg->waiting_for_nop = false;
         }
-        if (!(pg->pending_interrupts & NV_PGRAPH_INTR_CONTEXT_SWITCH)) {
+        if (!(nv2a_status_read(&pg->pending_interrupts) & NV_PGRAPH_INTR_CONTEXT_SWITCH)) {
             pg->waiting_for_context_switch = false;
         }
         pfifo_kick(d);
         break;
     case NV_PGRAPH_INTR_EN:
-        pg->enabled_interrupts = val;
+        nv2a_status_store(&pg->enabled_interrupts, (uint32_t)val);
         break;
     case NV_PGRAPH_INCREMENT:
         if (val & NV_PGRAPH_INCREMENT_READ_3D) {
@@ -958,7 +994,7 @@ void pgraph_context_switch(NV2AState *d, unsigned int channel_id)
                             NV_PGRAPH_DEBUG_3_HW_CONTEXT_SWITCH));
 
         pg->waiting_for_context_switch = true;
-        pg->pending_interrupts |= NV_PGRAPH_INTR_CONTEXT_SWITCH;
+        nv2a_status_raise(&pg->pending_interrupts, NV_PGRAPH_INTR_CONTEXT_SWITCH);
         pgraph_schedule_irq_update(d);
     }
 }
@@ -1794,7 +1830,7 @@ DEF_METHOD(NV097, NO_OPERATION)
     unsigned channel_id =
         PG_GET_MASK(NV_PGRAPH_CTX_USER, NV_PGRAPH_CTX_USER_CHID);
 
-    assert(!(pg->pending_interrupts & NV_PGRAPH_INTR_ERROR));
+    assert(!(nv2a_status_read(&pg->pending_interrupts) & NV_PGRAPH_INTR_ERROR));
 
     PG_SET_MASK(NV_PGRAPH_TRAPPED_ADDR, NV_PGRAPH_TRAPPED_ADDR_CHID,
              channel_id);
@@ -1805,7 +1841,7 @@ DEF_METHOD(NV097, NO_OPERATION)
     pgraph_reg_w(pg, NV_PGRAPH_TRAPPED_DATA_LOW, parameter);
     pgraph_reg_w(pg, NV_PGRAPH_NSOURCE,
                  NV_PGRAPH_NSOURCE_NOTIFICATION); /* TODO: check this */
-    pg->pending_interrupts |= NV_PGRAPH_INTR_ERROR;
+    nv2a_status_raise(&pg->pending_interrupts, NV_PGRAPH_INTR_ERROR);
     pg->waiting_for_nop = true;
 
     pgraph_schedule_irq_update(d);

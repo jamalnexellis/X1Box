@@ -47,7 +47,8 @@ void nv2a_update_irq(NV2AState *d)
     }
 
     /* PGRAPH */
-    if (d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) {
+    if (nv2a_status_read(&d->pgraph.pending_interrupts) &
+        nv2a_status_read(&d->pgraph.enabled_interrupts)) {
         d->pmc.pending_interrupts |= NV_PMC_INTR_0_PGRAPH;
     } else {
         d->pmc.pending_interrupts &= ~NV_PMC_INTR_0_PGRAPH;

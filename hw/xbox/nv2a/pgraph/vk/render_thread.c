@@ -19,6 +19,7 @@
 
 #include "qemu/osdep.h"
 #include "renderer.h"
+#include "draw-submit.h"
 #include "submission-ack.h"
 #include "render-idle.h"
 
@@ -120,55 +121,20 @@ void pgraph_vk_snapshot_state(PGRAPHState *pg, RenderCommandSnapshot *snap)
 
 static void process_finish(PGRAPHVkState *r, RenderCommand *cmd)
 {
-    VkSemaphore chain_wait_sems[1];
-    VkPipelineStageFlags chain_wait_stages[1];
-    uint32_t chain_wait_count = 0;
-
-    if (cmd->finish.chain_wait) {
-        chain_wait_sems[0] = cmd->finish.chain_semaphore;
-        chain_wait_stages[0] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-        chain_wait_count = 1;
-    }
-
-    VkSemaphore signal_sems[1];
-    uint32_t signal_count = 0;
-
-    if (cmd->finish.chain_signal) {
-        signal_sems[0] = cmd->finish.chain_semaphore;
-        signal_count = 1;
-    }
-
-    VkPipelineStageFlags aux_wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-    VkSubmitInfo submit_infos[] = {
-        {
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .waitSemaphoreCount = chain_wait_count,
-            .pWaitSemaphores = chain_wait_sems,
-            .pWaitDstStageMask = chain_wait_stages,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &cmd->finish.aux_command_buffer,
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &cmd->finish.aux_draw_semaphore,
-        },
-        {
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &cmd->finish.aux_draw_semaphore,
-            .pWaitDstStageMask = &aux_wait_stage,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &cmd->finish.command_buffer,
-            .signalSemaphoreCount = signal_count,
-            .pSignalSemaphores = signal_sems,
-        },
-    };
+    NV2AVkDrawSubmit submit;
+    nv2a_vk_draw_submit_init(&submit, cmd->finish.aux_command_buffer,
+        cmd->finish.command_buffer, cmd->finish.aux_draw_semaphore,
+        cmd->finish.chain_semaphore, cmd->finish.chain_wait,
+        cmd->finish.chain_signal, cmd->finish.independent_aux);
 
     int64_t submit_start = nv2a_stall_start();
     vkResetFences(r->device, 1, &cmd->finish.fence);
-    VK_CHECK(vkQueueSubmit(r->queue, ARRAY_SIZE(submit_infos), submit_infos,
+    VK_CHECK(vkQueueSubmit(r->queue, ARRAY_SIZE(submit.infos), submit.infos,
                            cmd->finish.fence));
     nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, submit_start, 0);
     nv2a_lag_event(NV2A_LAG_SUBMIT, submit_start, cmd->lag_id, cmd->lag_parent,
-                    cmd->finish.reason, cmd->finish.frame_index, cmd->finish.deferred);
+                    cmd->finish.reason, cmd->finish.frame_index,
+                    cmd->finish.deferred | ((uint32_t)cmd->finish.independent_aux << 1));
     if (r->render_thread.blocking_submit_ack) {
         /* The predicate and notification share a mutex with the waiter.
          * Publish only after vkQueueSubmit succeeds, as in the spin path. */
