@@ -3750,3 +3750,82 @@ no snapshot is saved or overwritten. Raw game images, traces, samples,
 addresses and harnesses remain private. No APK update, generic renderer
 change or speedup is delivered by this diagnostic. Judge and CI/CD remain
 disabled.
+
+## 2026-10-13: persistent GPU-buffer color copies (perf48)
+
+Perf48 adds an opt-in replacement for eligible queued RGBA8/BGRA8 color
+surface copies. `debug.xemu.vk.surf_copy_buffer=1` selects image-to-buffer
+and buffer-to-image transfers through dedicated persistent GPU scratch.
+`XEMU_VK_SURFACE_BUFFER_COPY=1` provides the desktop override. Both are off
+by default. Existing surface eligibility, texture versioning, destination
+reuse rules and main submission ordering are retained; no game is identified
+and no guest work is skipped.
+
+Scratch is allocated once, separately from compute and download buffers,
+using the existing bounded compute-buffer capacity (64 MiB on Android).
+Allocation failure disables the experiment. Unsupported formats, zero or
+overflowing extents and copies exceeding capacity retain the original image
+copy. Transfers preserve stored bytes, including BGRA/RGBA reinterpretation,
+without a CPU readback or a format-converting blit. Barriers retire previous
+scratch reads, order its write before its read, and restore source/destination
+image layouts. Cleanup covers normal shutdown and initialization failure.
+
+The production helper passes 71,887,872 exact generated-pixel comparisons
+across 16 color cases: RGBA/RGBA, BGRA/BGRA, RGBA/BGRA and BGRA/RGBA; three
+queued versions with prior destination reads; extents through 3840x1440.
+Host llvmpipe passes synchronization validation with zero errors. The same
+fixture passes on Adreno 830 without a phone validation layer. Capacity,
+unsupported-format, zero-size and overflow guards also pass. These checks
+establish helper correctness, not whole-game correctness or FPS gain.
+
+The final locally built/signed APK uses code 77 / `1.2.9-pgr2-perf48`, the
+existing lab package and signing certificate. SHA-256 is
+`b57b82d2f5423b93c0d6a3aa626c0658bb74a4cf9d962df849ff2f939685d7ec`.
+The download copy matches; 98 selected actual build inputs match committed
+source. One initial comparison stops before driving because its startup
+selection log was conditional on general debug logging. The final APK
+reports selection unconditionally at startup. A subsequent script uses an
+invalid input-helper label and is rejected before touch injection. Both
+attempts restore the scene and contribute no performance measurements.
+
+Four completed unprofiled Barcelona starts then compare the original and
+buffer routes in ABBA order. Each loads the user's current Slot 1, preserves
+their current 1x settings, uses the same 24-second native touch plan and
+checks the entire input interval for foreground and released controls.
+Thermal status is 1 at both endpoints of every case.
+
+| Route/order | Complete five-second-window mean |
+| --- | ---: |
+| Original, first | 12.845 FPS |
+| Buffer, first | 14.455 FPS |
+| Buffer, repeat | 14.243 FPS |
+| Original, repeat | 11.567 FPS |
+
+Full means mix presentation/countdown/racing progress and are not accepted
+as a speedup. Pooling only windows starting at least ten seconds after
+native input begins yields 11.840 FPS original and 12.555 FPS buffer;
+individual later windows are inconsistent, with different progression and
+only coarse thermal matching. End images show coherent wet roads, buildings,
+HUD and moving cars at 76--84 km/h with advanced rival markers. This covers
+short straight sections, not clean full laps or all textures.
+
+A separately authorized five-minute window completes an ABA repeat after
+waiting for the gameplay HUD and a fixed countdown delay. Whole-input means
+are 11.614 / 11.905 / 11.480 FPS, original / buffer / original. Later complete
+windows are 11.549 / 12.772 / 11.325 FPS. End images show the player moving at
+69--73 km/h, coherent graphics and advanced rival markers. Review of the
+ready images exposes a remaining phase-selection limit: HUD visibility and
+a fixed delay do not prove the race timer is active; placeholder timer/lap
+values are still visible. Early intervals must therefore be treated as
+transitional, and even the later-window comparison is short and lacks
+matched race positions. No sustained FPS improvement is accepted.
+
+The last repeat restores Barcelona at 01:13:10 Madrid, before its 01:13:57
+deadline. No snapshot-save operation occurs. All existing snapshot sidecar
+hashes, all original preference values and the original diagnostic properties
+are independently verified unchanged. A phone-local verified original HDD
+backup is retained; neither a benchmark seed nor a replacement HDD is used
+for these comparisons. The lab remains on the verified final Perf48 APK
+with the original copy route selected. FullHD race performance and sustained
+30 FPS remain unverified. Raw captures and harnesses stay private, and
+Judge/CI/CD remain disabled.
