@@ -347,7 +347,8 @@ void pgraph_init_reg_dynamic_masks(bool eds1, bool eds3);
 static inline uint32_t pgraph_reg_r(PGRAPHState *pg, unsigned int r)
 {
     assert(r % 4 == 0);
-    return r == NV_PGRAPH_FIFO ? nv2a_status_read(&pg->regs_[r]) : pg->regs_[r];
+    return r == NV_PGRAPH_FIFO || r == NV_PGRAPH_INCREMENT ?
+        nv2a_status_read(&pg->regs_[r]) : pg->regs_[r];
 }
 
 static inline void pgraph_reg_w(PGRAPHState *pg, unsigned int r, uint32_t v)
@@ -371,7 +372,7 @@ static inline void pgraph_reg_w(PGRAPHState *pg, unsigned int r, uint32_t v)
             pg->non_dynamic_reg_gen++;
         pg->any_reg_gen++;
     }
-    if (r == NV_PGRAPH_FIFO) { nv2a_status_store(&pg->regs_[r], v); }
+    if (r == NV_PGRAPH_FIFO || r == NV_PGRAPH_INCREMENT) { nv2a_status_store(&pg->regs_[r], v); }
     else { pg->regs_[r] = v; }
 }
 
@@ -410,7 +411,7 @@ static inline void pgraph_reg_w_atomic(PGRAPHState *pg, unsigned int r,
                                __ATOMIC_RELAXED);
         __atomic_fetch_add(&pg->any_reg_gen, 1, __ATOMIC_RELAXED);
     }
-    if (r == NV_PGRAPH_FIFO) { nv2a_status_store(&pg->regs_[r], v); }
+    if (r == NV_PGRAPH_FIFO || r == NV_PGRAPH_INCREMENT) { nv2a_status_store(&pg->regs_[r], v); }
     else { qatomic_set(&pg->regs_[r], v); }
 }
 

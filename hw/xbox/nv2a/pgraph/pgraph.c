@@ -795,6 +795,7 @@ uint64_t pgraph_read(void *opaque, hwaddr addr, unsigned int size)
         case NV_PGRAPH_INTR: status = nv2a_status_read(&pg->pending_interrupts); break;
         case NV_PGRAPH_INTR_EN: status = nv2a_status_read(&pg->enabled_interrupts); break;
         case NV_PGRAPH_FIFO: status = nv2a_status_read(&pg->regs_[NV_PGRAPH_FIFO]); break;
+        case NV_PGRAPH_INCREMENT: status = nv2a_status_read(&pg->regs_[NV_PGRAPH_INCREMENT]); break;
         default: goto locked_read;
         }
         if (unlikely(nv2a_lag_enabled)) { nv2a_lag_mmio_read(addr, status); }
