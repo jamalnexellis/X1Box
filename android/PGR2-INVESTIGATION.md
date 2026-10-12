@@ -3318,3 +3318,54 @@ A subsequent same-APK fast-fence comparison uses small comparisons off and
 the same cache/settings controls. Its first launch loses emulator foreground
 before a complete measurement and restores its own fresh record. It contributes
 no FPS or graphics result; fast-fence effects remain unmeasured in this session.
+
+### Perf43 resumed fast-fence comparison
+
+The next protected session tests the existing `fast_fences` preference in the
+same perf43 APK. Small uniform comparisons stay off; exact packing, descriptor
+memoization, 3x scanout, three submission slots, adaptive VBlank, the cold opaque
+cache, actual driver identity, warm shader seed and 144 pipeline recipes are
+fixed. Native startup logs verify the actual fence mode. This option defers
+vertex/buffer-space submissions through the existing fenced frame slots; no
+guest-specific wait shortcut, shader omission or changed barrier is added.
+
+The first off/on starts finish; an attempted second-on start ends before its
+native driving marker. Its grid image already shows a blurred Android
+transition and is excluded from game-graphics evidence; no complete FPS
+measurement is accepted. The native helper checks emulator focus before
+starting and throughout driving. The incomplete job's exact exception was not
+preserved, so it is not used to attribute an emulator failure. No helper process
+remains after restoration. The session restores at 19:49:17 Madrid, before
+19:54:57. After
+the user makes the phone available again, a fresh four-minute session completes
+the second-on and final-off references:
+
+| Fast fences | Case | Complete five-second windows | Descriptive FPS |
+| --- | --- | ---: | ---: |
+| Off | A | 4 | 25.872 |
+| On | A | 3 | 24.773 |
+| On | B, resumed | 4 | 27.400 |
+| Off | B, resumed | 3 | 25.888 |
+
+Off/on pool to 25.879/26.272 FPS, an observed 1.52% difference. On repeats
+span 24.773--27.400 FPS, much more than the pooled difference; the separated
+session and different trajectories/contact further limit inference. No FPS
+or stability improvement is accepted, and fast fences remain off. All fourteen
+window means are below 29.7 FPS. Internal scanout remains 1920x1440 with native
+2340x1080 output. Graphics/scheduler diagnostics are not completed in this
+comparison, so it does not establish which wait moved or shortened.
+
+The four accepted grid/mid/end sets show coherent road, buildings and HUD,
+the player and three moving rivals, and responding/released controls. All have
+visible countdown 2 at the grid; mid captures show 114--119 km/h. End positions
+and barrier contact vary substantially. Coverage remains short moving starts,
+not clean full laps, calibrated simulation speed or full-game compatibility.
+Each accepted current-process log has no fatal exception, assertion or Vulkan
+device loss; end thermal status is zero in all four. No accepted case records
+a notification-panel-close event.
+
+The resumed session restores its own current HDD/preferences/EEPROM and all
+twenty-five properties at 19:54:22 Madrid, before 19:56:26. Independent checks
+verify record hashes, actual perf43 APK identity, EEPROM ownership/mode,
+stopped emulator and untouched original Android user-10 installation. Raw
+game/cache/profile/capture data remain private; Judge/CI/CD remain disabled.
