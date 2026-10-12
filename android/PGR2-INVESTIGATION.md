@@ -3226,6 +3226,95 @@ because the scripted menu tap leaves the Android notification panel above the
 emulator. Its fresh backup is restored and verified at 18:52:07 Madrid, before
 18:59:45. The private harness now opens the app's supported Back-key menu path.
 A subsequent attempt observes keyguard before creating a backup. Neither
-attempt contributes FPS or graphics evidence. Perf43 installation and its
-moving off/on comparison remain pending a usable foreground device; no new
-FPS gain, sustained original speed or full-game graphics claim is made.
+attempt contributes FPS or graphics evidence. At this stage perf43 installation
+and its moving off/on comparison were pending a usable foreground device; no
+new FPS gain, sustained original speed or full-game graphics claim was made.
+
+### Perf43 moving comparison and native CPU evidence
+
+Perf43 is installed once with its APK hash, version, lab HDD/preferences/EEPROM
+and twenty-five properties verified. The first protected start fails before
+measurement: Android opens the Back-key menu on one input edge and dismisses
+it on the other. The private current-process log confirms dialog creation and
+immediate removal. That fresh record restores at 19:23:05 Madrid, before its
+19:29:59 deadline. The private harness uses the app's upward-swipe menu path
+for the subsequent accepted cases. This is an automation correction, not a
+measured emulation optimization.
+
+Three complete unprofiled starts run in the next protected session; the final
+reference is deferred to reserve restoration time. A fresh session completes
+that reference and a separate CPU-profiled pair. The four unprofiled cases
+hold exact uniform packing, descriptor memoization, 3x scanout, three submission
+slots, adaptive VBlank and all other settings fixed; fast fences remain off.
+Each uses the same cold opaque Vulkan cache, actual driver identity,
+185/193 warm shader modules and 144 complete pipeline recipes. All recipes
+warm without failure or cache invalidation. Four complete five-second flip
+windows fall within each native twenty-four-second throttle/steering plan:
+
+| Small uniform comparisons | Case | Descriptive FPS |
+| --- | --- | ---: |
+| Off | A | 27.289 |
+| On | A | 26.968 |
+| On | B | 27.012 |
+| Off | B, resumed | 26.427 |
+
+Off/on pool to 26.858/26.990 FPS, an observed 0.49% difference below repeat
+variation. The separated final reference and differing trajectories/contact
+further limit inference. No FPS gain is accepted and the experiment remains
+off by default. Off windows range 23.279--28.856 FPS and on windows
+24.990--28.913; all sixteen are below 29.7 FPS. Internal scanout remains
+1920x1440 with native 2340x1080 presentation. Original sustained 30 FPS is
+not established.
+
+The independent profiled pair enables graphics timing, scheduler tracing and
+native CPU-cycle sampling; JIT instrumentation remains off and no guest-code
+dump is collected. It is excluded from the FPS comparison. APK and unstripped
+ELF build IDs match (`9c389d6dbe98f9f78e3967f7ba34f04f1bd23a07`). Attribution
+selects the PFIFO thread from a pipeline event within the native driving bounds
+and checks that sampling spans those entire bounds. Off/on select 55,887/53,139
+PFIFO samples. Sampling records 327,604/343,661 process samples, with 64/0
+lost kernel samples and zero lost userspace samples. Kernel-symbol access
+remains restricted; no device security setting is changed.
+
+Libc comparisons attributed to `apply_uniform_updates` fall from 6.219% to
+3.430% of PFIFO sampled cycles. Its own inlined instructions rise from 4.350%
+to 5.925%, as comparison work moves into the function; the libc decrease must
+not be described as eliminating that entire cost. Total libc-comparison shares
+are 9.887%/7.236%. During 24.213/24.242 seconds of native input, PFIFO executes
+for 14.415/13.799 seconds and sleeps for 9.224/9.856 seconds. These are separate,
+instrumented starts with differing motion, not causal wall-time savings.
+MONOTONIC offset spreads are 1/52 ns and neither trace has positive scheduler
+error/data-loss counters.
+
+The profiled starts contain 636/569 complete frame intervals. Off/on medians
+are 34.998/38.662 ms, p95 54.339/68.442 ms, p99 79.393/107.089 ms and maxima
+97.837/130.487 ms. Intervals over 50 ms number 43/95. This unfavorable second
+diagnostic rules out a stability claim from the CPU-share change; it does not
+establish an unprofiled regression from one instrumented start per mode.
+Each has 28 valid ordinary pipeline feedback records, with 27 driver-cache
+hits and one miss. Feedback totals are 51.792/66.984 ms and miss maxima
+25.663/33.733 ms. Texture-decode maxima are 2.510/2.364 ms, shader compilation
+5.690/9.696 ms, presentation 31.441/24.139 ms and GPU fences 40.018/35.433 ms.
+Nested and cross-thread durations are not an additive GPU budget.
+
+All six reviewed grid/mid/end sets show coherent road, buildings and HUD with
+the player and three rivals moving. Throttle/steering respond and release is
+recorded. Mid captures show 112--115 km/h. Countdown, contact and trajectories
+differ; coverage remains short starts/first-turn approaches rather than full
+laps, calibrated simulation speed or exact game-pixel equivalence. All six
+end thermal statuses are zero and their current-process logs contain no fatal
+exception, assertion or Vulkan device loss. No accepted case records a
+notification-panel-close event.
+
+The first valid session restores its fresh current data at 19:28:28 Madrid,
+before 19:29:59. The resumed reference/CPU session restores at 19:34:38,
+before 19:36:09. Verification checks each record's hashes, twenty-five
+properties, APK identity, EEPROM ownership/mode, stopped emulator and untouched
+original Android user-10 installation. Seventy-nine selected build inputs
+match committed source; delivered/installed APK identities match. All raw
+game/cache/profile/capture data remain private and all builds/tests are local.
+
+A subsequent same-APK fast-fence comparison uses small comparisons off and
+the same cache/settings controls. Its first launch loses emulator foreground
+before a complete measurement and restores its own fresh record. It contributes
+no FPS or graphics result; fast-fence effects remain unmeasured in this session.
