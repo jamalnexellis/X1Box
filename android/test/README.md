@@ -426,3 +426,36 @@ Seed every comparison with the same opaque Vulkan cache, shader/recipe files
 and actual driver identity; exclude the record-only training pass from FPS
 comparisons. Confirm `xemu-pipeline-recipe` loaded/warmed/failure counts and
 inspect fresh driver cache-hit feedback with profiling in separate runs.
+
+# Exact uniform updates
+
+Perf41 adds an opt-in CPU packing route through Android property
+`debug.xemu.vk.uniform_exact=1` or desktop environment variable
+`XEMU_VK_UNIFORM_EXACT=1`, set before renderer startup. The default is off.
+Check the startup `exact uniform updates` value before comparing modes.
+The route compares the actual reflected value bytes, copies changed elements,
+and reads bulk vertex/light constants directly from the same source arrays
+used by the existing getter. Scalar computation, shader interfaces and guest
+instructions stay unchanged. Existing binding/frame/reset force-upload flags
+remain effective. Comparisons are byte-exact, including signed zero and NaN
+payloads; padding is left untouched. It does not rely on hashes or dirty flags
+to declare values equal.
+
+Run the production packing helper against the existing copy implementation:
+
+```sh
+cc -std=c11 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -I. -Iinclude \
+  android/test/cpp/test-uniform-update.c -o "$task_dir/uniform-update-check"
+"$task_dir/uniform-update-check"
+```
+
+The native Android CMake target is `test-uniform-update`. The fixture compares
+all bytes of guarded buffers across 36,864 generated updates with one to four
+components, lengths through 192, contiguous/strided layouts, partial/empty
+updates, repeated values and cold allocation replacement. It checks the
+returned change flag and raw-bit/padding preservation. These checks establish
+packing equivalence for the generated inputs; they do not exercise every
+shader binding, queued draw or game. Measure unprofiled moving gameplay with
+identical cache seeds and settings, and review graphics separately before
+accepting an FPS improvement or enabling the route by default.

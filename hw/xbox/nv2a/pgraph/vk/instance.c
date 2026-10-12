@@ -561,10 +561,15 @@ static void add_optional_device_extension_names(
 #ifdef __ANDROID__
     r->unoptimized_pipeline_compile = android_debug_property_enabled(
         "debug.xemu.vk.pipeline_fast_compile");
+    r->exact_uniform_updates = android_debug_property_enabled(
+        "debug.xemu.vk.uniform_exact");
 #else
     const char *fast_compile = getenv("XEMU_VK_PIPELINE_FAST_COMPILE");
     r->unoptimized_pipeline_compile = fast_compile && !strcmp(fast_compile, "1");
+    const char *uniform_exact = getenv("XEMU_VK_UNIFORM_EXACT");
+    r->exact_uniform_updates = uniform_exact && !strcmp(uniform_exact, "1");
 #endif
+    VK_LOG_ERROR("exact uniform updates=%d", r->exact_uniform_updates);
     /* Feedback is diagnostic only. No extension or pNext cost in FPS runs. */
     r->pipeline_creation_feedback_supported = nv2a_stall_profile_enabled &&
         (r->device_props.apiVersion >= VK_API_VERSION_1_3 ||

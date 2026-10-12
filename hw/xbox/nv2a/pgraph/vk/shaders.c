@@ -1597,16 +1597,25 @@ static ShaderBinding *get_shader_binding_for_state(PGRAPHVkState *r,
     return binding;
 }
 
-static void apply_uniform_updates(ShaderUniformLayout *layout,
+static bool apply_uniform_updates(ShaderUniformLayout *layout,
                                   const UniformInfo *info, int *locs,
-                                  void *values, size_t count)
+                                  void *values, size_t count,
+                                  const void *const *sources, bool exact)
 {
+    bool changed = false;
     for (int i = 0; i < count; i++) {
         if (locs[i] != -1) {
-            uniform_copy(layout, locs[i], (char*)values + info[i].val_offs,
-                         4, (info[i].size * info[i].count) / 4);
+            const void *source = sources && sources[i] ? sources[i] :
+                                (char *)values + info[i].val_offs;
+            size_t words = (info[i].size * info[i].count) / 4;
+            if (exact) {
+                changed |= uniform_copy_if_changed(layout, locs[i], source, 4, words);
+            } else {
+                uniform_copy(layout, locs[i], (void *)source, 4, words);
+            }
         }
     }
+    return changed;
 }
 
 void pgraph_vk_update_shader_uniforms(PGRAPHState *pg)
@@ -1637,11 +1646,38 @@ void pgraph_vk_update_shader_uniforms(PGRAPHState *pg)
                            pg->ltc1_any_dirty;
 
     VshUniformValues vsh_values;
+    VshUniformLocs value_locs;
+    const void *sources[VshUniform__COUNT] = {0};
+    int *getter_locs = binding->vsh.uniform_locs;
+    if (r->exact_uniform_updates) {
+        memcpy(value_locs, getter_locs, sizeof(value_locs));
+        getter_locs = value_locs;
+        /* Read the same raw arrays directly instead of copying via a large
+         * temporary. The existing getter still computes every scalar. */
+#define DIRECT_ARRAY(uniform, field) \
+        do { \
+            QEMU_BUILD_BUG_ON(sizeof(vsh_values.uniform) != sizeof(pg->field)); \
+            sources[VshUniform_##uniform] = pg->field; \
+            value_locs[VshUniform_##uniform] = -1; \
+        } while (0)
+        DIRECT_ARRAY(c, vsh_constants);
+        DIRECT_ARRAY(pointParams, point_params);
+        if (binding->state.vsh.is_fixed_function) {
+            DIRECT_ARRAY(ltctxa, ltctxa);
+            DIRECT_ARRAY(ltctxb, ltctxb);
+            DIRECT_ARRAY(ltc1, ltc1);
+            DIRECT_ARRAY(lightInfiniteHalfVector, light_infinite_half_vector);
+            DIRECT_ARRAY(lightInfiniteDirection, light_infinite_direction);
+            DIRECT_ARRAY(lightLocalPosition, light_local_position);
+            DIRECT_ARRAY(lightLocalAttenuation, light_local_attenuation);
+        }
+#undef DIRECT_ARRAY
+    }
     pgraph_glsl_set_vsh_uniform_values(pg, &binding->state.vsh,
-                                  binding->vsh.uniform_locs, &vsh_values);
-    apply_uniform_updates(vsh_layout, VshUniformInfo,
+                                  getter_locs, &vsh_values);
+    bool values_changed = apply_uniform_updates(vsh_layout, VshUniformInfo,
                           binding->vsh.uniform_locs, &vsh_values,
-                          VshUniform__COUNT);
+                          VshUniform__COUNT, sources, r->exact_uniform_updates);
 
     PshUniformValues psh_values;
     pgraph_glsl_set_psh_uniform_values(pg, binding->psh.uniform_locs,
@@ -1660,11 +1696,19 @@ void pgraph_vk_update_shader_uniforms(PGRAPHState *pg)
 
         psh_values.texScale[i] = scale;
     }
-    apply_uniform_updates(psh_layout, PshUniformInfo,
+    values_changed |= apply_uniform_updates(psh_layout, PshUniformInfo,
                           binding->psh.uniform_locs, &psh_values,
-                          PshUniform__COUNT);
+                          PshUniform__COUNT, NULL, r->exact_uniform_updates);
 
-    if (constants_dirty) {
+    if (r->exact_uniform_updates) {
+        /* Existing force-upload flags from binding/frame/reset remain set.
+         * Detect changes from the bytes we actually packed, without hashes. */
+        r->uniforms_changed |= values_changed;
+        pg->vsh_constants_any_dirty = false;
+        pg->ltctxa_any_dirty = false;
+        pg->ltctxb_any_dirty = false;
+        pg->ltc1_any_dirty = false;
+    } else if (constants_dirty) {
         /* Dirty flags already tell us uniforms changed — skip comparison hash */
         r->uniforms_changed = true;
         r->last_vsh_uniform_hash = fast_hash(vsh_layout->allocation,

@@ -2916,3 +2916,93 @@ APK matches the installed/tested artifact. Judge and CI/CD remain disabled;
 all builds/tests are local and raw game data/caches/captures/profiles stay
 private. This route prepares known pipeline work; sustained throughput
 and long-tail synchronization remain open performance problems.
+
+### Perf40 CPU, translated-code and scheduler diagnosis
+
+A separate moving diagnostic with 144 recipes prewarmed correlates simpleperf
+CPU-cycle samples, timestamped JIT load records and Perfetto scheduling with
+the same native input markers. The sampled native library matches the tested
+APK build ID. All 56,609 JIT loads have distinct start addresses in this
+capture; attribution checks load timestamps rather than assuming an address
+always represents the same translated block. Raw code, guest addresses,
+profiles and game disassembly remain private.
+
+During 24.268 seconds of native input, the vCPU executes for 21.943 seconds
+(90.4% of one core), PFIFO for 14.446 seconds and the render worker for
+0.669 seconds. These threads overlap; their times are not an additive budget.
+The vCPU accounts for 53.91% of sampled process cycles and PFIFO for 26.44%.
+Within vCPU samples, 49.72% map to translated guest code, 47.18% to native
+code and 3.09% remain unmapped. Two short guest polling loops account for
+approximately 25.38% of vCPU sampled cycles. This shows substantial polling,
+not useful guest progress or proof that removing the loops would improve
+the critical path. The producer of the second loop has not been established;
+no title-specific loop removal or guessed wait replacement is introduced.
+
+Native `cpu_exec_loop`, `cpu_tb_exec` and `lookup_tb_ptr_common` account for
+12.12%, 4.29% and 2.86% of vCPU sampled cycles. PFIFO copy/move samples are
+15.10% of that thread's cycles. Call-chain attribution places 4.36 percentage
+points in uniform packing and 1.87 in the bulk vertex-uniform getter, while
+5.17 are inside driver descriptor binding. These are profiled cycle shares,
+not wall-time savings or unprofiled FPS gains. They motivate a generic exact
+uniform-copy experiment without changing translated guest semantics.
+
+The clocks correlate with two MONOTONIC snapshots differing by 52 ns in their
+offsets, with no positive trace error/data-loss counters. A 19.864 ms fresh
+pipeline creation has PFIFO running for 19.812 ms and vCPU running for
+19.501 ms. A 19.921 ms presentation interval has the render worker sleeping
+for 19.647 ms, PFIFO sleeping throughout and vCPU running for 19.389 ms.
+GPU-fence waits reach 33.032 ms. Thus substantial CPU execution can coexist
+with graphics waits. The sampled vCPU utilization alone cannot establish
+which work limits sustained speed.
+
+### Perf40 moving dispatcher comparison
+
+The existing guarded `can_do_io` elision experiment is compared with recipe
+replay enabled and profiling disabled at 3x. Four complete twenty-four-second
+moving starts give off/on/on/off descriptive FPS of 26.894, 26.695, 27.269
+and 27.797. The first attempted final-off start loses foreground and is
+discarded; the fourth valid start is collected later in a fresh protected
+session. The opaque cache, warm shaders, driver identity and 144-recipe seed
+match, but the separated time window and trajectories limit inference.
+Off pools to 27.345 FPS and on to 26.982 FPS. No improvement is accepted;
+the experiment remains off by default. All sixteen window means are below
+29.7 FPS. Three moving rivals, coherent road/buildings/HUD and responding,
+released controls are visible in the reviewed captures. All end thermal
+statuses are zero. Each session restores its own current data and properties;
+later ordinary user changes are preserved by a fresh backup rather than
+reapplying an old record.
+
+### Perf41 exact uniform packing experiment
+
+The opt-in `debug.xemu.vk.uniform_exact` / `XEMU_VK_UNIFORM_EXACT` route
+compares reflected value bytes against the current shader-module allocation,
+copies only changed values, and reads bulk vertex/light arrays directly from
+their existing sources. Computed scalars still use the existing getter.
+Uniform equality is exact, including NaN payloads and signed zero; inter-element
+padding remains untouched. Existing force-upload flags on binding/frame/reset
+remain set. Shader interfaces, pipeline recipes, cache identity, full shader
+state comparisons and emulated guest instructions stay unchanged. The default
+remains off while performance and game coverage are evaluated.
+
+The ASan/UBSan host fixture and native arm64 fixture each pass 36,864
+differential updates against the old packing implementation: 10,809 changed
+and 26,055 unchanged cases, including contiguous/strided, partial/empty,
+repeated and cold-allocation cases. The existing native uniform-copy fixture
+also passes. These are generated buffer comparisons, not an exhaustive
+queued-draw or game compatibility test.
+
+Perf41 builds locally as version 70 / `1.2.9-pgr2-perf41` in the separate
+`.dev.local` package with the existing signing certificate. Signature,
+package/version, actual arm64 feature strings and installed APK identity
+pass. The delivered/installed APK SHA-256 is
+`1a74ea0b62d8704931253dfeb5e1ee3566b67565773e7911e858f061873a084d`.
+
+Two initial moving attempts stop at the foreground-window guard before a
+complete measurement. Neither is counted as an FPS or graphics result.
+Their independent fresh records restore their own HDD/preferences/EEPROM
+hashes and all twenty-three properties, with the emulator stopped and the
+original Android user-10 installation untouched. The private harness now
+records the rejected window and startup log before restoration, to distinguish
+menu-transition problems from a real foreground loss. No perf41 FPS benefit
+or sustained original-speed result has yet been established. Judge/CI/CD
+remain disabled and raw game/profile/cache data stay private.

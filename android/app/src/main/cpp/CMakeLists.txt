@@ -1276,6 +1276,11 @@ target_include_directories(test-uniform-copy PRIVATE
   "${REPO_ROOT}" "${REPO_ROOT}/include")
 target_compile_options(test-uniform-copy PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(test-uniform-update EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-uniform-update.c")
+target_include_directories(test-uniform-update PRIVATE "${REPO_ROOT}" "${REPO_ROOT}/include")
+target_compile_options(test-uniform-update PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(test-texture-upload EXCLUDE_FROM_ALL
   "${REPO_ROOT}/android/test/cpp/test-texture-upload.c"
 )

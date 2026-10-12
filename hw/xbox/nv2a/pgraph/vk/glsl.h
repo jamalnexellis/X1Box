@@ -22,6 +22,7 @@
 
 #include "qemu/osdep.h"
 #include <stdint.h>
+#include <stdbool.h>
 #include <assert.h>
 #include <string.h>
 
@@ -156,6 +157,39 @@ static inline void uniform_copy(ShaderUniformLayout *layout, int idx,
         p_in += element_size;
         index += 1;
     }
+}
+
+/* Compare only reflected value bytes. Padding and NaN payloads stay intact. */
+static inline bool uniform_copy_if_changed(ShaderUniformLayout *layout, int idx,
+    const void *values, size_t value_size, size_t count)
+{
+    assert(idx > 0 && (size_t)idx <= layout->num_uniforms);
+    const ShaderUniform *u = &layout->uniforms[idx - 1];
+    size_t element_size = value_size * u->dim_v;
+    assert(element_size && count % u->dim_v == 0);
+    assert(count / u->dim_v <= u->dim_a);
+    size_t remaining = value_size * count;
+    char *out = uniform_ptr(layout, idx);
+    char *maximum = (char *)layout->allocation + layout->total_size;
+    const char *in = values;
+    if (remaining <= element_size || u->stride == element_size) {
+        assert(out + remaining <= maximum);
+        if (!remaining || !memcmp(out, in, remaining)) return false;
+        memcpy(out, in, remaining);
+        return true;
+    }
+    bool changed = false;
+    while (remaining) {
+        assert(out + element_size <= maximum);
+        if (memcmp(out, in, element_size)) {
+            memcpy(out, in, element_size);
+            changed = true;
+        }
+        remaining -= element_size;
+        out += u->stride;
+        in += element_size;
+    }
+    return changed;
 }
 
 static inline
