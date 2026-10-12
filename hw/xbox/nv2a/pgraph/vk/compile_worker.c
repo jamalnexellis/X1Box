@@ -109,8 +109,15 @@ static void process_pipeline_job(PGRAPHVkState *r, CompileJob *job)
         .pDynamicStates = p->dynamic_states,
     };
 
+    VkPipelineCreationFeedback feedback = {0};
+    VkPipelineCreationFeedbackCreateInfo feedback_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO,
+        .pPipelineCreationFeedback = &feedback,
+    };
     VkGraphicsPipelineCreateInfo pipeline_create_info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .flags = p->create_flags,
+        .pNext = p->creation_feedback_supported ? &feedback_info : NULL,
         .stageCount = p->num_shader_stages,
         .pStages = p->shader_stages,
         .pVertexInputState = &vertex_input,
@@ -133,6 +140,8 @@ static void process_pipeline_job(PGRAPHVkState *r, CompileJob *job)
         p->device, p->vk_pipeline_cache, 1, &pipeline_create_info, NULL,
         &pipeline);
     nv2a_stall_record(NV2A_STALL_PIPELINE_CREATE, pipeline_start, 0);
+    pgraph_vk_log_pipeline_creation(r, pipeline_create_info.flags,
+                                    p->module_hashes, &feedback);
 
     if (result == VK_SUCCESS) {
         target->pipeline = pipeline;

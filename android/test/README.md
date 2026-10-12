@@ -347,3 +347,33 @@ driver-identity mismatch or different module warm-up counts. A newly isolated
 test files directory can lack this identity even on the same phone; imported
 shaders will then be correctly discarded. Record this separately from the
 unprofiled FPS measurements.
+
+# Pipeline compilation policy and feedback
+
+The generated-pixel target also accepts a final `0`/`1` argument for the
+production pipeline-compilation policy. `1` applies Vulkan's
+`VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT`; omitted or `0` leaves normal
+optimization enabled. Run both modes with the three shader paths above and
+compare pixels before measuring moving gameplay. The flat shader's warmed
+cache timings cannot establish the cost of a new game material.
+
+The emulator's experiment is opt-in through Android property
+`debug.xemu.vk.pipeline_fast_compile=1` or desktop environment variable
+`XEMU_VK_PIPELINE_FAST_COMPILE=1`. It applies to ordinary graphics pipelines
+in both synchronous creation and the existing async worker. A separate key
+bit keeps policy variants apart, while full shader-state collision checks
+remain unchanged. Clear, display and compute pipeline creation keep their
+existing policy. No guest instructions, shader operations or geometry are
+removed. The existing async draw-skipping setting is separate; leave it
+disabled for this comparison.
+
+Vulkan specifies that disabling optimization may reduce creation time;
+measure execution cost as well. See [Khronos pipeline flags](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineCreateFlagBits.html).
+With the stall profiler enabled, supported devices also report creation
+feedback and hashes of the actual vertex/geometry/fragment SPIR-V modules.
+Vulkan 1.3 provides feedback directly; earlier devices require the optional
+extension. Unprofiled FPS runs do not enable that extension, attach its
+feedback structure or hash modules. Duration/cache-hit fields are read only
+when feedback has its VALID bit, following [Khronos feedback requirements](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineCreationFeedback.html).
+Module-hash groups help investigate repeated code; they do not prove complete
+pipeline equality or justify relaxing the production state comparison.

@@ -8,6 +8,7 @@
 #include <time.h>
 #include <vulkan/vulkan.h>
 #include "hw/xbox/nv2a/pgraph/vk/vertex-input.h"
+#include "hw/xbox/nv2a/pgraph/vk/pipeline-compile.h"
 
 #define CHECK(x) do { VkResult r_=(x); if(r_!=VK_SUCCESS) { fprintf(stderr,"%s: %d\n",#x,r_); abort(); } } while(0)
 #define N 16
@@ -19,6 +20,7 @@ static VkRenderPass pass;
 static VkPipelineLayout layout;
 static VkShaderModule modules[3];
 static int empty_input;
+static bool unoptimized;
 static VkImage image;
 static VkFramebuffer framebuffer;
 static VkBuffer vertices, readback;
@@ -74,7 +76,7 @@ static VkPipeline pipeline(unsigned i,int dynamic,VkPipelineCache cache,uint64_t
     VkPipelineDynamicStateCreateInfo dyn={.sType=VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,.dynamicStateCount=1,.pDynamicStates=&state};
     VkPipelineCreationFeedback feedback={0};
     VkPipelineCreationFeedbackCreateInfo feedback_info={.sType=VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO,.pPipelineCreationFeedback=&feedback};
-    VkGraphicsPipelineCreateInfo info={.sType=VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,.pNext=&feedback_info,.stageCount=2,.pStages=stages,.pVertexInputState=dynamic?NULL:&input,.pInputAssemblyState=&assembly,.pViewportState=&vp,.pRasterizationState=&raster,.pMultisampleState=&ms,.pColorBlendState=&blend,.pDynamicState=dynamic?&dyn:NULL,.layout=layout,.renderPass=pass};
+    VkGraphicsPipelineCreateInfo info={.sType=VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,.pNext=&feedback_info,.flags=nv2a_vk_draw_pipeline_flags(unoptimized),.stageCount=2,.pStages=stages,.pVertexInputState=dynamic?NULL:&input,.pInputAssemblyState=&assembly,.pViewportState=&vp,.pRasterizationState=&raster,.pMultisampleState=&ms,.pColorBlendState=&blend,.pDynamicState=dynamic?&dyn:NULL,.layout=layout,.renderPass=pass};
     VkPipeline out; uint64_t before=ns(); CHECK(vkCreateGraphicsPipelines(device,cache,1,&info,NULL,&out)); *create_ns+=ns()-before;
     if(feedback.flags&VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) (*hits)++;
     return out;
@@ -107,7 +109,9 @@ static uint64_t draw(VkPipeline pipeline_value,unsigned i,int dynamic,void *pixe
     vkDestroyFence(device,fence,NULL); vkFreeCommandBuffers(device,pool,1,&cmd); return elapsed;
 }
 int main(int argc,char **argv) {
-    assert(argc==4);
+    assert(argc==4 || argc==5);
+    if(argc==5) {assert(!strcmp(argv[4],"0") || !strcmp(argv[4],"1"));unoptimized=!strcmp(argv[4],"1");}
+    printf("pipeline_fast_compile=%d\n",unoptimized);
     VkApplicationInfo app={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.pApplicationName="x1box-generated-input-layouts",.apiVersion=VK_API_VERSION_1_3};
     VkInstanceCreateInfo ic={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,.pApplicationInfo=&app}; VkInstance instance; CHECK(vkCreateInstance(&ic,NULL,&instance));
     uint32_t n=1; CHECK(vkEnumeratePhysicalDevices(instance,&n,&physical)); assert(n);

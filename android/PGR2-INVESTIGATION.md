@@ -2700,3 +2700,107 @@ input defaults OFF, and the emulator is stopped. Sixty-one selected build
 inputs are checked against committed sources and the delivered APK matches
 the installed artifact. Builds/tests remain local; Judge and CI/CD stay
 disabled. Game data, caches, captures and profiles remain private.
+
+### Perf39 driver compilation policy and feedback
+
+The opt-in compilation experiment applies Vulkan's
+`VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT` to ordinary synchronous and
+async graphics-pipeline creation. Default remains normal optimization.
+Pipeline keys carry a separate policy bit and keep the complete shader-state
+collision check. Clear/display/compute pipelines keep their previous policy.
+Guest instructions, generated shader operations and geometry are unchanged.
+The existing async draw-skipping setting remains disabled in gameplay tests.
+Vulkan describes this flag as a possible creation-time reduction; execution
+cost still needs measurement. See [Khronos pipeline flags](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineCreateFlagBits.html).
+
+Profiled runs also capture driver-reported creation feedback and hashes of
+the actual vertex/geometry/fragment SPIR-V modules. Feedback requires Vulkan
+1.3 or its optional extension; duration/cache-hit values are read only when
+VALID is set. Unprofiled FPS runs attach no feedback structure and do not
+hash modules. Module tuples help investigate repeated code, without relaxing
+production state equality. See [Khronos feedback semantics](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineCreationFeedback.html).
+
+Perf39 builds locally as version 68 / `1.2.9-pgr2-perf39` in `.dev.local`.
+V2 signature, existing certificate, package/version and actual arm64 feature
+strings pass verification. Host ASan/UBSan and native arm64 pass 132,000
+pipeline-key differential cases plus both policy/mode separation checks.
+The production flag helper is also used by the native generated-pixel
+fixture. Normal and unoptimized creation each pass 270,336 exact RGBA
+comparisons across static/dynamic layouts and empty-input draws. These flat
+shaders use warmed driver state; their timings establish no cold-game gain.
+The APK is installed once with an increased version and data/property hashes
+verified before gameplay. SHA-256:
+`045f7cb8034b5132b611c18d102a4c570fa58ef6d166d5009eb663781072944c`.
+
+### Perf39 moving results and decision
+
+Four unprofiled normal/unoptimized/unoptimized/normal starts use the same
+signed APK, 3x settings, warm seed and twenty-four-second native input plan.
+Each case includes four complete flip windows inside native touch markers.
+All six starts, including the diagnostics, preserve the exact current driver
+identity and report 185/193 prewarmed modules with no invalidation. No
+diagnostic has shader compilation before touch input.
+
+| Creation policy | Case | Descriptive FPS |
+| --- | --- | ---: |
+| Normal | A | 26.979 |
+| Unoptimized | A | 26.625 |
+| Unoptimized | B | 26.460 |
+| Normal | B | 27.599 |
+
+Normal pools to 27.289 FPS; unoptimized pools to 26.543 FPS, a descriptive
+2.74% decrease. Eight normal window averages range from 25.324--28.155;
+eight unoptimized averages range from 22.396--28.800. All are below 29.7 FPS.
+Trajectories/contact differ and this short cohort does not isolate a causal
+regression. It establishes no accepted FPS benefit. The new policy remains
+OFF by default, as does dynamic vertex input. Original 30 FPS sustained at
+Full HD or higher remains unverified; 3x scanout is 1920x1440 and native
+presentation is 2340x1080.
+
+The matched-cache profiled starts contain 649/615 complete moving frame
+intervals for normal/unoptimized creation. Median intervals are
+35.144/37.027 ms, p95 51.291/57.894 ms, and maxima 91.901/115.790 ms.
+There are 35/60 intervals above 50 ms. No improvement in frame stability is
+accepted from these descriptive diagnostics.
+
+Driver feedback is valid for all 41/33 ordinary draw-pipeline creations
+ending inside native input bounds. Application-cache hits number 28/22 and
+take 0.469--1.944/0.616--1.603 ms. The 13/11 misses take
+17.145--46.587/22.103--43.556 ms. Thus cache hits are inexpensive in these
+captures and fresh backend compilation remains the expensive case; requesting
+unoptimized compilation does not remove it. Complete-frame host phase
+aggregates record 41/33 pipeline creations totaling 342.699/341.638 ms and
+maxima 46.601/43.575 ms. Frame-phase and metadata selections use different
+boundary rules and include different clear/draw calls; their totals are not
+interchangeable. Nested/cross-thread host timings are not an additive GPU
+budget or proof that compilation alone explains the sustained FPS deficit.
+
+During movement, module-tuple hashes group those creations into 36/29 groups,
+with at most two creations per group. Full captured startups/movement contain
+313/304 creations grouped into 120/114 module tuples. Equal hashes alone do
+not prove shader or pipeline equality: fixed state and layout can differ.
+Normal/unoptimized shader-compilation counts during complete moving frames
+are 1/2, with maxima 5.088/12.142 ms. Texture decoding maxima are
+0.881/0.971 ms; presentation waits reach 23.906/24.477 ms and GPU-fence
+waits 30.522/23.168 ms. These measurements support investigating complete
+pipeline preparation/persistence separately from SPIR-V warm-up and ongoing
+CPU/synchronization cost.
+
+All six reviewed grid/mid/end sets show coherent buildings, road, player car
+and HUD. Three moving rivals are visible in each mid capture and progress on
+the minimap. Throttle/steering respond and release. Mid game clocks span
+4.087--4.404 seconds and ends 22.737--24.704. Barrier contact/trajectories
+differ, including the first-turn approach in the final diagnostic. This is
+short-start coverage, not a complete lap, calibrated simulation-speed proof
+or assurance about artifacts between still captures. All end thermal
+statuses are zero and captured emulator processes have no fatal exception,
+assertion or device loss.
+
+The protected record restores its own HDD/preferences/EEPROM hashes and all
+twenty-one diagnostic properties at 02:47:46 Madrid, before the 02:49:28
+deadline. Final verification confirms the installed APK, stopped emulator,
+EEPROM ownership/mode and untouched original Android profile. Perf39 remains
+installed with both new experiments default OFF. Sixty-three selected build
+inputs match committed sources and the delivered APK matches the installed
+artifact. Judge/CI/CD remain disabled; all builds/tests are local and raw
+game data/caches/captures/profiles remain private.

@@ -27,6 +27,7 @@ typedef struct { uint8_t bytes[4096]; } ShaderState;
 typedef struct {
     bool clear;
     bool dynamic_vertex_input;
+    bool unoptimized_compile;
     RenderPassState render_pass_state;
     uint64_t shader_state_hash;
     uint32_t regs[6];
@@ -155,6 +156,11 @@ int main(void)
     PipelineKey static_key = {0}, dynamic_key = {0};
     ShaderState shader = {0};
     dynamic_key.dynamic_vertex_input = true;
+    assert(vk_pipeline_keys_differ(&static_key, &dynamic_key,
+                                  sizeof(static_key), false,
+                                  &shader, &shader, sizeof(shader)));
+    dynamic_key = static_key;
+    dynamic_key.unoptimized_compile = true;
     assert(vk_pipeline_keys_differ(&static_key, &dynamic_key,
                                   sizeof(static_key), false,
                                   &shader, &shader, sizeof(shader)));

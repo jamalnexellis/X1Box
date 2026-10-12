@@ -1290,6 +1290,7 @@ static void init_pipeline_key(PGRAPHState *pg, PipelineKey *key)
      * copying and rehashing it on every pipeline lookup. */
     key->shader_state_hash = r->shader_binding->node.hash;
     key->dynamic_vertex_input = r->dynamic_vertex_input_enabled;
+    key->unoptimized_compile = r->unoptimized_pipeline_compile;
     if (!key->dynamic_vertex_input) {
         memcpy(key->binding_descriptions, r->vertex_binding_descriptions,
                sizeof(key->binding_descriptions[0]) *
@@ -1366,6 +1367,32 @@ static void init_pipeline_key(PGRAPHState *pg, PipelineKey *key)
                            NV_PGRAPH_CONTROL_1_STENCIL_MASK_READ |
                            NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE);
     }
+#endif
+}
+
+void pgraph_vk_log_pipeline_creation(PGRAPHVkState *r,
+                                    VkPipelineCreateFlags flags,
+                                    const uint64_t module_hashes[3],
+                                    const VkPipelineCreationFeedback *feedback)
+{
+#ifdef __ANDROID__
+    if (nv2a_stall_profile_enabled) {
+        bool valid = r->pipeline_creation_feedback_supported &&
+            (feedback->flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT);
+        __android_log_print(ANDROID_LOG_INFO, "xemu-pipeline-compile",
+            "fast=%d valid=%d cache_hit=%d ns=%" PRIu64
+            " v=%016" PRIx64 " g=%016" PRIx64 " f=%016" PRIx64,
+            !!(flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT), valid,
+            valid && (feedback->flags &
+                VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT),
+            valid ? feedback->duration : 0,
+            module_hashes[0], module_hashes[1], module_hashes[2]);
+    }
+#else
+    (void)r;
+    (void)flags;
+    (void)module_hashes;
+    (void)feedback;
 #endif
 }
 
@@ -1553,6 +1580,21 @@ static void create_pipeline(PGRAPHState *pg)
             .module = r->shader_binding->psh.module_info->module,
             .pName = "main",
         };
+
+    uint64_t module_hashes[3] = {0};
+    if (nv2a_stall_profile_enabled) {
+        const ShaderModuleInfo *modules[] = {
+            r->shader_binding->vsh.module_info,
+            r->shader_binding->geom.module_info,
+            r->shader_binding->psh.module_info,
+        };
+        for (int i = 0; i < ARRAY_SIZE(modules); i++) {
+            if (modules[i]) {
+                module_hashes[i] = fast_hash(modules[i]->spirv->data,
+                                              modules[i]->spirv->len);
+            }
+        }
+    }
 
     VkPipelineVertexInputStateCreateInfo vertex_input = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -1891,6 +1933,9 @@ static void create_pipeline(PGRAPHState *pg)
         PipelineCreateParams *p = &job->pipeline.params;
         p->device = r->device;
         p->vk_pipeline_cache = r->vk_pipeline_cache;
+        p->create_flags = nv2a_vk_draw_pipeline_flags(key.unoptimized_compile);
+        p->creation_feedback_supported = r->pipeline_creation_feedback_supported;
+        memcpy(p->module_hashes, module_hashes, sizeof(module_hashes));
         memcpy(p->shader_stages, shader_stages,
                num_active_shader_stages * sizeof(shader_stages[0]));
         p->num_shader_stages = num_active_shader_stages;
@@ -1931,8 +1976,15 @@ static void create_pipeline(PGRAPHState *pg)
     }
 #endif
 
+    VkPipelineCreationFeedback feedback = {0};
+    VkPipelineCreationFeedbackCreateInfo feedback_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO,
+        .pPipelineCreationFeedback = &feedback,
+    };
     VkGraphicsPipelineCreateInfo pipeline_create_info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .flags = nv2a_vk_draw_pipeline_flags(key.unoptimized_compile),
+        .pNext = r->pipeline_creation_feedback_supported ? &feedback_info : NULL,
         .stageCount = num_active_shader_stages,
         .pStages = shader_stages,
         .pVertexInputState = key.dynamic_vertex_input ? NULL : &vertex_input,
@@ -1953,6 +2005,8 @@ static void create_pipeline(PGRAPHState *pg)
     VK_CHECK(vkCreateGraphicsPipelines(r->device, r->vk_pipeline_cache, 1,
                                        &pipeline_create_info, NULL, &pipeline));
     nv2a_stall_record(NV2A_STALL_PIPELINE_CREATE, pipeline_start, 0);
+    pgraph_vk_log_pipeline_creation(r, pipeline_create_info.flags,
+                                    module_hashes, &feedback);
 #ifdef __ANDROID__
     if (nv2a_stall_profile_enabled) {
         __android_log_print(ANDROID_LOG_INFO, "xemu-pipeline-input",

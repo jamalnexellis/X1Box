@@ -25,6 +25,7 @@
 #include "present-reuse.h"
 #include "vertex-propagation.h"
 #include "vertex-input.h"
+#include "pipeline-compile.h"
 #include "cubemap-copy.h"
 #include "qemu/queue.h"
 #include "qemu/lru.h"
@@ -231,6 +232,7 @@ typedef struct RenderPass {
 typedef struct PipelineKey {
     bool clear;
     bool dynamic_vertex_input;
+    bool unoptimized_compile;
     RenderPassState render_pass_state;
     uint64_t shader_state_hash;
     uint32_t regs[OPT_DYNAMIC_STATES ? 6 : 9];
@@ -436,6 +438,9 @@ typedef struct ShaderBinding {
 typedef struct PipelineCreateParams {
     VkDevice device;
     VkPipelineCache vk_pipeline_cache;
+    VkPipelineCreateFlags create_flags;
+    bool creation_feedback_supported;
+    uint64_t module_hashes[3];
 
     VkPipelineShaderStageCreateInfo shader_stages[3];
     int num_shader_stages;
@@ -1093,6 +1098,8 @@ typedef struct PGRAPHVkState {
     bool extended_dynamic_state_supported;
     bool dynamic_vertex_input_requested;
     bool dynamic_vertex_input_enabled;
+    bool unoptimized_pipeline_compile;
+    bool pipeline_creation_feedback_supported;
 #if OPT_DYNAMIC_BLEND
     bool eds3_blend_supported;
 #endif
@@ -1763,6 +1770,10 @@ void pgraph_vk_process_pending_reports_internal(NV2AState *d);
 
 // draw.c
 void pgraph_vk_init_pipelines(PGRAPHState *pg);
+void pgraph_vk_log_pipeline_creation(PGRAPHVkState *r,
+                                    VkPipelineCreateFlags flags,
+                                    const uint64_t module_hashes[3],
+                                    const VkPipelineCreationFeedback *feedback);
 void pgraph_vk_finalize_pipelines(PGRAPHState *pg);
 void pgraph_vk_clear_surface(NV2AState *d, uint32_t parameter);
 void pgraph_vk_draw_begin(NV2AState *d);

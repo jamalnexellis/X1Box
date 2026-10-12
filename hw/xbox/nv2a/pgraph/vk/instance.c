@@ -20,6 +20,7 @@
 #include "qemu/osdep.h"
 #include "ui/xemu-settings.h"
 #include "renderer.h"
+#include "../stall-profile.h"
 #include "xemu-version.h"
 
 #ifdef __ANDROID__
@@ -556,6 +557,19 @@ static void add_optional_device_extension_names(
         add_extension_if_available(available_extensions,
                                    enabled_extension_names,
                                    VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
+
+#ifdef __ANDROID__
+    r->unoptimized_pipeline_compile = android_debug_property_enabled(
+        "debug.xemu.vk.pipeline_fast_compile");
+#else
+    const char *fast_compile = getenv("XEMU_VK_PIPELINE_FAST_COMPILE");
+    r->unoptimized_pipeline_compile = fast_compile && !strcmp(fast_compile, "1");
+#endif
+    /* Feedback is diagnostic only. No extension or pNext cost in FPS runs. */
+    r->pipeline_creation_feedback_supported = nv2a_stall_profile_enabled &&
+        (r->device_props.apiVersion >= VK_API_VERSION_1_3 ||
+         add_extension_if_available(available_extensions, enabled_extension_names,
+                                   VK_EXT_PIPELINE_CREATION_FEEDBACK_EXTENSION_NAME));
 
     if (r->device_props.apiVersion < VK_API_VERSION_1_3) {
         r->extended_dynamic_state_supported = add_extension_if_available(
@@ -1184,6 +1198,10 @@ static bool create_logical_device(PGRAPHState *pg, Error **errp)
                        "dynamic vertex input requested=%d enabled=%d",
                        r->dynamic_vertex_input_requested,
                        r->dynamic_vertex_input_enabled);
+    __android_log_print(ANDROID_LOG_INFO, "hakuX-vk",
+                       "pipeline fast compile=%d feedback=%d",
+                       r->unoptimized_pipeline_compile,
+                       r->pipeline_creation_feedback_supported);
 #endif
 
     /* Do not advertise EDS1 to the renderer unless every command it emits is
