@@ -106,6 +106,30 @@ and requests CPU frequency/idle events where available. Absence of frequency
 events means unavailable telemetry, not a fixed frequency. Trace clock and
 data-loss diagnostics must be checked before attribution.
 
+Scheduler integrity needs an explicit coverage check as well as loss counters.
+A ring buffer can overwrite the beginning without reporting a trace error.
+After translating Perfetto timestamps through its MONOTONIC clock snapshots,
+require trace bounds to contain both native driving markers. Exclude uncovered
+frames and label partial traces explicitly. The initial 32 MiB/40-second phone
+capture retained only the tail; later 128 MiB/40-second captures contained the
+entire driving interval. Buffer size alone is not evidence of completeness.
+
+Perfetto can retain thread scheduling while omitting a worker's process mapping.
+An empty `JOIN process ... WHERE pid=...` result does not mean that worker was
+idle. Anchor thread IDs to contemporaneous `/proc/<emulator-pid>/task` lists,
+check ownership before and after the capture, and restrict attribution to the
+verified process lifetime. Identify vCPU/PFIFO/render roles from recorder events
+instead of assigning roles from the shared `qemu_main` thread name.
+
+For a long completion wait, follow its batch ID through dequeue and submission,
+then compare submit return with calibrated auxiliary/main GPU timestamps. Check
+which earlier GPU intervals overlap the pre-start gap. Their overlap supports
+queued dependencies; it is not a measurement of pure GPU occupancy. Correlate
+the same interval with thread states and CPU samples: a sleeping producer and
+a running vCPU can coexist, and vCPU polling is not useful simulation progress.
+Ordinary-RAM polling still requires separate JIT samples; NV2A MMIO logging
+does not identify its producer or justify skipping that loop.
+
 Each phone session uses a fresh protected backup and a bounded deadline,
 checks APK identity and focus, stops on interruption, preserves exact helper
 errors, and restores its own data/preferences/EEPROM and all 27 diagnostic

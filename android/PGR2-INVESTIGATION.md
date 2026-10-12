@@ -3433,3 +3433,114 @@ Its packaged and unstripped native ELF build IDs agree:
 `3cada00d6b37dd269dcccad011a0a89492d499f7`. Eighty-nine selected build inputs
 are checked against the saved build snapshot and committed source. Judge and
 CI/CD remain disabled; raw phone/game/driver/capture data stay private.
+
+### Perf44 moving dependency captures and attribution
+
+The installed perf44 APK identity matches the locally verified artifact above.
+One unprofiled 3x moving start and four bounded diagnostics now ran on the phone:
+warm 3x, warm 1x, warm 3x with CPU/JIT sampling, and cold shader/recipe resources
+at 3x. Each restarts the race, drives with the same 24-second throttle/steering
+plan and releases all inputs. Native input markers delimit analysis; images
+are outside that interval. Warm cases establish 185/193 shader modules and
+144/144 successful recipe warmups. Cold resources omit those imported seeds
+and disable recipe warming. Trajectories and barrier contact differ, so these
+are diagnostic interventions, not exact-scene FPS comparisons.
+
+The first scheduler attempt was rejected because its configuration path was
+not readable by Perfetto. A later warm 3x trace retained only the final part of
+driving in its 32 MiB ring buffer; none of its slowest twenty frames had retained
+scheduling. Its recorder/GPU data are complete, but it is excluded from whole-
+driving scheduler attribution. Another initial query incorrectly excluded
+workers whose Perfetto process mapping was absent. Private correlation now
+uses independently captured process task ownership, checks clock agreement,
+requires the whole driving interval inside trace bounds, and rejects positive
+trace error/loss counters. Three later 128 MiB captures pass those checks; their
+MONOTONIC snapshot offsets differ by only 52 ns within each trace.
+
+All four recorder exports have valid sequence/count/footer and zero drops;
+their calibrated GPU intervals pass the host submission/readback plausibility
+checks. The 2,495 complete instrumented flip intervals are distributed below.
+Percentiles refer to these recorded intervals, not unprofiled performance.
+
+| Diagnostic | Complete flip intervals | Intervals over 50 ms | Median / p95 / maximum interval, ms |
+| --- | ---: | ---: | --- |
+| Warm 3x | 608 | 61 | 37.031 / 60.520 / 96.625 |
+| Warm 1x | 664 | 24 | 34.098 / 43.734 / 94.609 |
+| Warm 3x with CPU/JIT samples | 639 | 36 | 36.039 / 50.996 / 86.159 |
+| Cold resources 3x | 584 | 82 | 38.150 / 69.577 / 113.344 |
+
+There are now specific observed stall chains:
+
+- Pipeline creation runs synchronously on PFIFO. Its maximum is 30.198 ms in
+  warm 3x, 24.247 ms in warm 1x, 22.239 ms with CPU sampling, and 45.078 ms with
+  cold resources. During the 45.078 ms interval, scheduling records PFIFO
+  running for 44.799 ms. During the sampled 22.239 ms interval, PFIFO runs for
+  21.874 ms and user callchains reach Adreno `vkCreateGraphicsPipelines`, driver
+  compiler code and compression. Concurrent vCPU samples put 65.33% of its
+  cycle weight in one ordinary-RAM polling loop; this overlap does not establish
+  which operation publishes that RAM flag.
+- Completion waits identify vertex-buffer updates and buffer capacity pressure.
+  Warm 3x contains 90 vertex-dirty and ten capacity waits; the largest is
+  24.798 ms. Submission itself takes 0.126 ms, then the first timestamp of that
+  batch arrives 17.213 ms after submit return. Earlier batch GPU intervals
+  overlap 17.196 ms of that gap; the current auxiliary/main interval union is
+  7.021 ms. Another vertex-dirty wait lasts 20.913 ms although its own GPU
+  interval union is 1.742 ms; earlier work overlaps 18.510 ms of its pre-start
+  gap. These are queued dependency observations, not pure GPU busy time.
+- The sampled 3x case includes a 36.306 ms vertex completion wait. PFIFO sleeps
+  for 36.285 ms and the render worker for 36.113 ms while the vCPU runs for
+  35.608 ms. At 1x there is still a 31.884 ms vertex completion wait. Lowering
+  resolution changes the workload but does not eliminate synchronization.
+- Register read-lock waits are a separate contributor. The sampled maximum
+  is 64.762 ms, with the vCPU sleeping for 62.506 ms; only a nested 21.181 ms
+  slot/fence wait has a complete producer link. The remaining lock interval
+  is not attributed entirely to GPU execution. Lock ownership/wake paths and
+  observer interference remain open questions.
+
+Texture decode spans are smaller in these captures: maximum 1.014 ms in warm
+3x, 0.932 ms at 1x, 1.062 ms with CPU sampling and 1.602 ms with cold resources.
+This does not exclude cumulative texture preparation or other scenes. A warm
+1x texture-image allocation also reaches 23.168 ms. Appearing objects can
+introduce new pipelines and resource synchronization in addition to decoding
+their textures; the symptom alone cannot distinguish those costs.
+
+Full-interval scheduling shows the vCPU running for 92.09% at 1x, 89.53% in the
+sampled 3x case, and 86.31% with cold resources. Its runnable scheduling delay
+is 0.69--0.85%; this is one emulated CPU thread, not whole-phone utilization.
+PFIFO runs for 61.5--61.8% and sleeps for roughly 36%. The separate CPU profile
+contains 283,427 in-driving samples. Native/guest symbol attribution uses the
+matching perf44 ELF and a fresh JIT map with no overlapping address ranges.
+Two polling loops account for 26.51% of vCPU sampled cycle weight; selected
+native dispatch/lookup functions account for another 22.37%, with prologue
+execution separate. These cycle weights cannot be added to GPU wall time or
+treated as achievable FPS gains. Simpleperf reports 22 lost kernel samples,
+zero lost user samples, and restricted kernel symbols; no restriction is changed.
+
+The unprofiled reference accepts four complete five-second windows inside
+native driving markers: 27.900, 26.113, 24.147 and 27.589 FPS, pooled to
+26.436 FPS. This is a short descriptive reference, not sustained original
+speed or a measured perf44 optimization gain. Internal 3x scanout remains
+1920x1440 and Android output 2340x1080. Repeated warm/unprofiled references
+remain pending, and all diagnostic runs include observer cost.
+
+Reviewed end images show coherent road/buildings/HUD, released controls and
+advanced rival markers on the minimap. Player motion is established by the
+grid/end positions and native input; barrier contact eventually stops several
+cases. This covers short moving starts, not clean full laps or full-game
+graphics correctness. Current-process logs have no fatal exception, assertion
+or Vulkan device loss; end thermal status is zero for the four diagnostics.
+
+The next generic optimization targets are pipeline misses on the PFIFO path
+and buffer lifetime/dependency serialization. Shared destination-buffer writes
+currently require explicit ordering against earlier readers; simply deleting
+those waits/barriers or skipping guest polling would not establish correctness.
+Detailed per-slot resource lifetime experiments need matching pixel checks and
+unprofiled moving repeats. The long register mutex tail needs more attribution
+before changing its synchronization.
+
+The final protected session restores its own HDD/preferences/EEPROM and all
+27 properties at 21:37:42 Madrid. Independent checks confirm the installed
+perf44 APK, restored hashes, EEPROM ownership/mode, stopped emulator and
+untouched original user-10 installation. All raw game/driver/JIT/scheduler
+data remain private. Judge and CI/CD remain disabled; no clocks, governors,
+kernel or security settings are changed.
