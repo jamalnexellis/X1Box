@@ -627,8 +627,14 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
             r->surface_buffer_copy = false;
         }
     }
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+        "surface buffer copy=%d scratch=%zu", r->surface_buffer_copy,
+        r->surface_buffer_copy ? r->surface_copy_scratch.buffer_size : 0);
+#else
     VK_LOG("surface buffer copy=%d scratch=%zu", r->surface_buffer_copy,
            r->surface_buffer_copy ? r->surface_copy_scratch.buffer_size : 0);
+#endif
 
     // FIXME: Add fallback path for device using host mapped memory
 
