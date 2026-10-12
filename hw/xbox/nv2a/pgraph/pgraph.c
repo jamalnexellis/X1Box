@@ -26,6 +26,7 @@
 #endif
 
 #include "hw/xbox/nv2a/nv2a_int.h"
+#include "hw/xbox/nv2a/pgraph/lag-trace.h"
 #include "qemu/main-loop.h"
 #include "ui/xemu-notifications.h"
 #include "ui/xemu-settings.h"
@@ -760,11 +761,14 @@ uint64_t pgraph_read(void *opaque, hwaddr addr, unsigned int size)
         uint32_t fence = qatomic_read(&pg->regs_[NV_PGRAPH_PATT_COLOR0]);
         /* Pairs with the smp_wmb() at the fence write site below. */
         smp_rmb();
+        if (unlikely(nv2a_lag_enabled)) { nv2a_lag_mmio_read(addr, fence); }
         nv2a_reg_log_read(NV_PGRAPH, addr, size, fence);
         return fence;
     }
 
+    int64_t lag_lock = nv2a_lag_start();
     qemu_mutex_lock(&pg->lock);
+    nv2a_lag_event(NV2A_LAG_MMIO_LOCK, lag_lock, 0, 0, addr, 1, 0);
 
     uint64_t r = 0;
     switch (addr) {
@@ -796,6 +800,7 @@ uint64_t pgraph_read(void *opaque, hwaddr addr, unsigned int size)
 
     qemu_mutex_unlock(&pg->lock);
 
+    if (unlikely(nv2a_lag_enabled)) { nv2a_lag_mmio_read(addr, r); }
     nv2a_reg_log_read(NV_PGRAPH, addr, size, r);
     return r;
 }
@@ -1651,7 +1656,11 @@ slow_path:
              * precedes this fence visible before the new value is.
              */
             smp_wmb();
+            int64_t lag_write = nv2a_lag_start();
             pgraph_reg_w(pg, NV_PGRAPH_PATT_COLOR0, parameter);
+            nv2a_lag_event(NV2A_LAG_FENCE_WRITE, lag_write,
+                nv2a_lag_next_id(), nv2a_lag_current(),
+                NV_PGRAPH_PATT_COLOR0, parameter, 0);
             break;
         default:
             goto unhandled;

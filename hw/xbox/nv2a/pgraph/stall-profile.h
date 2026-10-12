@@ -3,6 +3,7 @@
 #define NV2A_STALL_PROFILE_H
 
 #include "qemu/timer.h"
+#include "lag-trace.h"
 
 typedef enum NV2AStallPhase {
     NV2A_STALL_TEXTURE_HASH,
@@ -62,7 +63,7 @@ void nv2a_stall_record(NV2AStallPhase phase, int64_t start_us, uint64_t bytes);
 void nv2a_stall_frame(int64_t now_us);
 static inline int64_t nv2a_stall_start(void)
 {
-    return unlikely(nv2a_stall_profile_enabled) ?
+    return unlikely(nv2a_stall_profile_enabled || nv2a_lag_enabled) ?
         qemu_clock_get_us(QEMU_CLOCK_REALTIME) : 0;
 }
 #else

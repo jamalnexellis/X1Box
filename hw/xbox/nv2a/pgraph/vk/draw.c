@@ -21,6 +21,7 @@
 #include "qemu/fast-hash.h"
 #include "qemu/error-report.h"
 #include "renderer.h"
+#include "hw/xbox/nv2a/pgraph/lag-trace-buffer.h"
 #include "pipeline-key-compare.h"
 #include "system/physmem.h"
 #include "ui/xemu-settings.h"
@@ -787,7 +788,7 @@ void pgraph_vk_finalize_pipelines(PGRAPHState *pg)
     for (int i = 0; i < NUM_SUBMIT_FRAMES; i++) {
         r->frame_enqueued[i] = false;
         if (r->frame_submitted[i]) {
-            VK_CHECK(vkWaitForFences(r->device, 1, &r->frame_fences[i],
+            VK_CHECK(pgraph_vk_wait_for_fences(r, 1, &r->frame_fences[i],
                                      VK_TRUE, UINT64_MAX));
             r->frame_submitted[i] = false;
         }
@@ -1399,6 +1400,15 @@ void pgraph_vk_log_pipeline_creation(PGRAPHVkState *r,
                                     const VkPipelineCreationFeedback *feedback)
 {
 #ifdef __ANDROID__
+    if (nv2a_lag_enabled) {
+        bool valid = r->pipeline_creation_feedback_supported &&
+            (feedback->flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT);
+        nv2a_lag_event(NV2A_LAG_PIPELINE_FEEDBACK, nv2a_lag_start(),
+            nv2a_lag_current(), 0, valid,
+            valid && (feedback->flags &
+                VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT),
+            valid ? feedback->duration : 0);
+    }
     if (nv2a_stall_profile_enabled) {
         bool valid = r->pipeline_creation_feedback_supported &&
             (feedback->flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT);
@@ -2511,6 +2521,70 @@ static void end_render_pass(PGRAPHVkState *r)
     }
 }
 
+
+static void lag_gpu_readback(PGRAPHVkState *r, int frame, uint64_t begin,
+                             uint64_t end, VkResult result)
+{
+    if (!nv2a_lag_enabled) { return; }
+    uint64_t id = r->lag_cb_ids[frame];
+    int64_t now = nv2a_lag_start();
+    uint64_t period_ps = llround((double)r->gpu_ts_period_ns * 1000.0);
+    nv2a_lag_event(NV2A_LAG_GPU_QUERY, now, id, 0,
+                    (uint64_t)(int64_t)result, frame, 0);
+    if (result != VK_SUCCESS || r->lag_readback_ids[frame] == id) { return; }
+    r->lag_readback_ids[frame] = id;
+    nv2a_lag_event(NV2A_LAG_GPU_MAIN, now, id, 0, begin, end, period_ps);
+    if (r->lag_aux_ts_pool && r->lag_aux_ts_recorded[frame]) {
+        uint64_t auxiliary[2];
+        VkResult aux_result = vkGetQueryPoolResults(r->device, r->lag_aux_ts_pool,
+            frame * 2, 2, sizeof(auxiliary), auxiliary, sizeof(uint64_t),
+            VK_QUERY_RESULT_64_BIT);
+        nv2a_lag_event(NV2A_LAG_GPU_QUERY, now, id, 0,
+                       (uint64_t)(int64_t)aux_result, frame, 1);
+        if (aux_result == VK_SUCCESS) {
+            nv2a_lag_event(NV2A_LAG_GPU_AUX, now, id, 0,
+                           auxiliary[0], auxiliary[1], period_ps);
+        }
+    }
+    if (now - r->lag_last_calibration_us < 100000) { return; }
+    r->lag_last_calibration_us = now;
+    PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT get_domains =
+        (PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT)
+        vkGetInstanceProcAddr(r->instance, "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT");
+    PFN_vkGetCalibratedTimestampsEXT get_calibrated =
+        (PFN_vkGetCalibratedTimestampsEXT)
+        vkGetDeviceProcAddr(r->device, "vkGetCalibratedTimestampsEXT");
+    if (r->lag_calibrated_supported && get_domains && get_calibrated) {
+        uint32_t count = 0;
+        bool monotonic = false, device = false;
+        if (get_domains(r->physical_device, &count, NULL) == VK_SUCCESS && count <= 16) {
+            VkTimeDomainEXT domains[16];
+            if (get_domains(r->physical_device, &count, domains) == VK_SUCCESS) {
+                for (unsigned i = 0; i < count; ++i) {
+                    monotonic |= domains[i] == VK_TIME_DOMAIN_CLOCK_MONOTONIC_EXT;
+                    device |= domains[i] == VK_TIME_DOMAIN_DEVICE_EXT;
+                }
+            }
+        }
+        if (monotonic && device) {
+            VkCalibratedTimestampInfoEXT info[2] = {
+                { .sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT,
+                  .timeDomain = VK_TIME_DOMAIN_DEVICE_EXT },
+                { .sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT,
+                  .timeDomain = VK_TIME_DOMAIN_CLOCK_MONOTONIC_EXT }
+            };
+            uint64_t timestamps[2], deviation;
+            int64_t calibration_start = nv2a_lag_start();
+            if (get_calibrated(r->device, 2, info, timestamps, &deviation) == VK_SUCCESS) {
+                nv2a_lag_event(NV2A_LAG_CALIBRATION, calibration_start, id, 0,
+                               timestamps[0], timestamps[1], deviation);
+            }
+        }
+    }
+    nv2a_lag_event(NV2A_LAG_GPU_CAPS, now, id, 0, r->lag_timestamp_bits,
+                    period_ps, r->lag_calibrated_supported);
+}
+
 static void gpu_ts_readback(PGRAPHVkState *r, int frame)
 {
     if (!r->gpu_ts_supported) {
@@ -2526,19 +2600,21 @@ static void gpu_ts_readback(PGRAPHVkState *r, int frame)
         sizeof(uint64_t) * query_count, r->gpu_ts_results,
         sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
     if (res != VK_SUCCESS) {
+        lag_gpu_readback(r, frame, 0, 0, res);
         return;
     }
 
     uint64_t cb_start = r->gpu_ts_results[0];
     uint64_t cb_end = r->gpu_ts_results[1];
-    int64_t total_ticks = (int64_t)(cb_end - cb_start);
+    lag_gpu_readback(r, frame, cb_start, cb_end, res);
+    int64_t total_ticks = nv2a_lag_tick_delta(cb_start, cb_end, r->lag_timestamp_bits);
     int64_t total_ns = (int64_t)(total_ticks * r->gpu_ts_period_ns);
 
     int64_t render_ticks = 0;
     for (int i = 0; i < rp_count; i++) {
         uint64_t rp_start = r->gpu_ts_results[2 + i * 2];
         uint64_t rp_end = r->gpu_ts_results[2 + i * 2 + 1];
-        render_ticks += (int64_t)(rp_end - rp_start);
+        render_ticks += nv2a_lag_tick_delta(rp_start, rp_end, r->lag_timestamp_bits);
     }
     int64_t render_ns = (int64_t)(render_ticks * r->gpu_ts_period_ns);
     int64_t nonrender_ns = total_ns - render_ns;
@@ -2589,7 +2665,7 @@ void pgraph_vk_flush_all_frames(PGRAPHState *pg)
     for (int i = 0; i < r->num_active_frames; i++) {
         r->frame_enqueued[i] = false;
         if (r->frame_submitted[i]) {
-            VK_CHECK(vkWaitForFences(r->device, 1, &r->frame_fences[i],
+            VK_CHECK(pgraph_vk_wait_for_fences(r, 1, &r->frame_fences[i],
                                      VK_TRUE, UINT64_MAX));
             gpu_ts_readback(r, i);
             r->frame_submitted[i] = false;
@@ -2752,6 +2828,14 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
             VK_PIPELINE_STAGE_TRANSFER_BIT, wait_stage,
             0, 1, &aux_main_barrier, 0, NULL, 0, NULL);
 
+        if (r->lag_aux_ts_pool && r->lag_aux_ts_recorded[r->current_frame]) {
+            vkCmdWriteTimestamp(r->aux_command_buffer,
+                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                r->lag_aux_ts_pool, r->current_frame * 2 + 1);
+        }
+        nv2a_lag_event(NV2A_LAG_CB_END, nv2a_lag_start(),
+            r->lag_cb_ids[r->current_frame], 0,
+            finish_reason, r->draws_in_cb, r->current_frame);
         VK_CHECK(vkEndCommandBuffer(r->aux_command_buffer));
         r->in_aux_command_buffer = false;
         if (r->gpu_ts_supported) {
@@ -2823,6 +2907,8 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
                                    submit_infos,
                                    r->command_buffer_fence));
             nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, queue_start, 0);
+            nv2a_lag_event(NV2A_LAG_SUBMIT, queue_start,
+                r->lag_cb_ids[r->current_frame], 0, finish_reason, r->current_frame, 0);
             qatomic_inc(&r->submit_count);
 
             if (finish_reason == VK_FINISH_REASON_PRESENTING) {
@@ -2832,10 +2918,12 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
                 qatomic_set(&r->frame_submitted[r->current_frame], true);
             } else {
                 int64_t fence_start = nv2a_stall_start();
-                VK_CHECK(vkWaitForFences(r->device, 1,
+                VK_CHECK(pgraph_vk_wait_for_fences(r, 1,
                                          &r->command_buffer_fence,
                                          VK_TRUE, UINT64_MAX));
                 nv2a_stall_record(NV2A_STALL_GPU_FENCE, fence_start, 0);
+                nv2a_lag_event(NV2A_LAG_FENCE, fence_start,
+                    r->lag_cb_ids[r->current_frame], 0, r->current_frame, 0, 0);
                 if (r->pending_post_fence_cb) {
                     r->pending_post_fence_cb(r, NULL,
                                              r->pending_post_fence_opaque);
@@ -2869,6 +2957,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
 
             RenderCommand *cmd = g_new0(RenderCommand, 1);
             cmd->type = RCMD_FINISH;
+            cmd->lag_id = r->lag_cb_ids[r->current_frame];
             cmd->finish.reason = finish_reason;
             cmd->finish.aux_command_buffer = r->aux_command_buffer;
             cmd->finish.command_buffer = r->command_buffer;
@@ -2910,7 +2999,10 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
             }
 
             if (!deferred) {
+                int64_t completion_start = nv2a_lag_start();
                 qemu_event_wait(&finish_event);
+                nv2a_lag_event(NV2A_LAG_COMPLETION_WAIT, completion_start,
+                    r->lag_cb_ids[r->current_frame], 0, r->current_frame, 0, 0);
                 qemu_event_destroy(&finish_event);
                 gpu_ts_readback(r, r->current_frame);
 
@@ -2987,10 +3079,12 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
                  * existing fence phase so frame-slot recycling can be
                  * distinguished from the CPU cleanup/propagation below. */
                 int64_t slot_fence_start = nv2a_stall_start();
-                VK_CHECK(vkWaitForFences(r->device, 1,
+                VK_CHECK(pgraph_vk_wait_for_fences(r, 1,
                                          &r->frame_fences[next_frame],
                                          VK_TRUE, UINT64_MAX));
                 nv2a_stall_record(NV2A_STALL_GPU_FENCE, slot_fence_start, 0);
+                nv2a_lag_event(NV2A_LAG_SLOT_WAIT, slot_fence_start,
+                    nv2a_lag_current(), r->lag_cb_ids[next_frame], next_frame, 0, 0);
 #ifdef __ANDROID__
                 static int slot_fence_timing_logged;
                 if (slot_fence_start &&
@@ -3044,6 +3138,8 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
 
             pgraph_vk_propagate_vertex_ram(r, next_frame);
 
+            r->lag_aux_ts_recorded[next_frame] = false;
+            nv2a_lag_context(0);
             r->current_frame = next_frame;
             r->command_buffer = r->command_buffers[next_frame * 2];
             r->aux_command_buffer = r->command_buffers[next_frame * 2 + 1];
@@ -3057,6 +3153,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
         r->push_tex_dirty = true;
         r->uniforms_changed = true;
         r->in_command_buffer = false;
+        r->lag_batch_id = 0;
         r->color_drawn_in_cb = false;
         r->zeta_drawn_in_cb = false;
         r->queries_reset_in_cb = false;
@@ -3088,6 +3185,11 @@ void pgraph_vk_begin_command_buffer(PGRAPHState *pg)
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
+    if (!r->lag_batch_id) { r->lag_batch_id = nv2a_lag_next_id(); }
+    r->lag_cb_ids[r->current_frame] = r->lag_batch_id;
+    nv2a_lag_context(r->lag_cb_ids[r->current_frame]);
+    nv2a_lag_event(NV2A_LAG_CB_BEGIN, nv2a_lag_start(),
+                    r->lag_cb_ids[r->current_frame], 0, r->current_frame, 0, 0);
     nv2a_vk_descriptor_bind_invalidate(&r->descriptor_bind_last);
     VK_CHECK(vkBeginCommandBuffer(r->command_buffer,
                                   &command_buffer_begin_info));

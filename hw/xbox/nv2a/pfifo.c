@@ -20,6 +20,7 @@
  */
 
 #include "nv2a_int.h"
+#include "hw/xbox/nv2a/pgraph/lag-trace.h"
 
 #ifndef XEMU_OPT_THREAD_AFFINITY
 #define XEMU_OPT_THREAD_AFFINITY 0
@@ -107,7 +108,9 @@ uint64_t pfifo_read(void *opaque, hwaddr addr, unsigned int size)
 {
     NV2AState *d = (NV2AState *)opaque;
 
+    int64_t lag_lock = nv2a_lag_start();
     qemu_mutex_lock(&d->pfifo.lock);
+    nv2a_lag_event(NV2A_LAG_MMIO_LOCK, lag_lock, 0, 0, addr, 2, 0);
 
     uint64_t r = 0;
     switch (addr) {
@@ -131,6 +134,7 @@ uint64_t pfifo_read(void *opaque, hwaddr addr, unsigned int size)
 
     qemu_mutex_unlock(&d->pfifo.lock);
 
+    if (unlikely(nv2a_lag_enabled)) { nv2a_lag_mmio_read(UINT64_C(0x100000000) | addr, r); }
     nv2a_reg_log_read(NV_PFIFO, addr, size, r);
     return r;
 }
@@ -610,7 +614,12 @@ void *pfifo_thread(void *arg)
             uint32_t get_before = d->pfifo.regs[NV_PFIFO_CACHE1_DMA_GET];
             bool was_post_flip = g_nv2a_stats.phase_working.post_flip;
             int64_t push_t0 = nv2a_clock_ns();
+            int64_t lag_run = nv2a_lag_start();
             pfifo_run_pusher(d);
+            nv2a_lag_event(NV2A_LAG_PFIFO_RUN, lag_run,
+                nv2a_lag_current(), 0,
+                d->pfifo.regs[NV_PFIFO_CACHE1_DMA_GET] != get_before,
+                d->pfifo.halt, 0);
             g_nv2a_stats.cpu_working.pusher_run_ns +=
                 nv2a_clock_ns() - push_t0;
             if (d->pfifo.regs[NV_PFIFO_CACHE1_DMA_GET] != get_before
@@ -622,6 +631,16 @@ void *pfifo_thread(void *arg)
         pgraph_process_pending_reports(d);
 
         if (!d->pfifo.fifo_kick) {
+            int64_t lag_idle = nv2a_lag_start();
+            unsigned lag_reasons = 0;
+            if (nv2a_lag_enabled) {
+                lag_reasons = !!qatomic_read(&d->pgraph.waiting_for_flip) |
+                    (!!qatomic_read(&d->pgraph.waiting_for_nop) << 1) |
+                    (!!qatomic_read(&d->pgraph.waiting_for_context_switch) << 2) |
+                    (!!d->pfifo.halt << 3) |
+                    ((d->pfifo.regs[NV_PFIFO_CACHE1_DMA_GET] ==
+                      d->pfifo.regs[NV_PFIFO_CACHE1_DMA_PUT]) << 4);
+            }
             int64_t idle_t0 = nv2a_clock_ns();
 
 #if XEMU_OPT_FIFO_SPIN
@@ -663,6 +682,8 @@ void *pfifo_thread(void *arg)
             qemu_cond_wait(&d->pfifo.fifo_cond, &d->pfifo.lock);
 #endif
 
+            nv2a_lag_event(NV2A_LAG_PFIFO_IDLE, lag_idle,
+                nv2a_lag_current(), 0, lag_reasons, 0, 0);
             int64_t idle_ns = nv2a_clock_ns() - idle_t0;
             g_nv2a_stats.phase_working.fifo_idle_ns += idle_ns;
             if (g_nv2a_stats.phase_working.post_flip) {

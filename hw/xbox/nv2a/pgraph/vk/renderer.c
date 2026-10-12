@@ -245,7 +245,7 @@ static void pgraph_vk_init(NV2AState *d, Error **errp)
          * pool reset and readback per command buffer. Tie it to the telemetry
          * switch so a build with NV2A_PERF_LOG=0 does not pay for it.
          */
-        if (NV2A_PERF_LOG &&
+        if ((NV2A_PERF_LOG || nv2a_lag_enabled) && r->lag_timestamp_bits &&
             r->device_props.limits.timestampComputeAndGraphics) {
             VkQueryPoolCreateInfo ts_ci = {
                 .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
@@ -256,6 +256,12 @@ static void pgraph_vk_init(NV2AState *d, Error **errp)
                                        &r->gpu_ts_pool));
             r->gpu_ts_supported = true;
             r->gpu_ts_period_ns = r->device_props.limits.timestampPeriod;
+            if (nv2a_lag_enabled) {
+                ts_ci.queryCount = NUM_SUBMIT_FRAMES * 2;
+                VkResult lag_result = vkCreateQueryPool(r->device, &ts_ci, NULL,
+                                                       &r->lag_aux_ts_pool);
+                if (lag_result != VK_SUCCESS) { r->lag_aux_ts_pool = VK_NULL_HANDLE; }
+            }
             VK_LOG_ERROR("init: GPU timestamps enabled (period=%.2f ns)",
                          r->gpu_ts_period_ns);
         } else {
@@ -299,9 +305,17 @@ static void pgraph_vk_finalize(NV2AState *d)
 
     {
         PGRAPHVkState *r = pg->vk_renderer_state;
+        if (r->gpu_ts_pool || r->lag_aux_ts_pool) {
+            /* Query pools remain referenced by deferred submissions. */
+            VK_CHECK(vkDeviceWaitIdle(r->device));
+        }
         if (r->gpu_ts_supported) {
             vkDestroyQueryPool(r->device, r->gpu_ts_pool, NULL);
             r->gpu_ts_pool = VK_NULL_HANDLE;
+        }
+        if (r->lag_aux_ts_pool) {
+            vkDestroyQueryPool(r->device, r->lag_aux_ts_pool, NULL);
+            r->lag_aux_ts_pool = VK_NULL_HANDLE;
         }
     }
 
@@ -1625,7 +1639,7 @@ static int pgraph_vk_get_framebuffer_surface(NV2AState *d)
         DisplayImage *ready = &r->display.images[r->display.display_idx];
         if (ready->valid) {
             if (ready->fence_submitted) {
-                VK_CHECK(vkWaitForFences(r->device, 1, &ready->fence,
+                VK_CHECK(pgraph_vk_wait_for_fences(r, 1, &ready->fence,
                                          VK_TRUE, UINT64_MAX));
                 ready->fence_submitted = false;
             }
@@ -1644,7 +1658,7 @@ static int pgraph_vk_get_framebuffer_surface(NV2AState *d)
         qemu_event_wait(&d->pgraph.sync_complete);
         ready = &r->display.images[r->display.display_idx];
         if (ready->valid && ready->fence_submitted) {
-            VK_CHECK(vkWaitForFences(r->device, 1, &ready->fence,
+            VK_CHECK(pgraph_vk_wait_for_fences(r, 1, &ready->fence,
                                      VK_TRUE, UINT64_MAX));
             ready->fence_submitted = false;
         }

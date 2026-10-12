@@ -825,7 +825,7 @@ static void destroy_single_display_image(PGRAPHState *pg, DisplayImage *img)
 
     if (img->fence != VK_NULL_HANDLE) {
         if (img->fence_submitted) {
-            vkWaitForFences(r->device, 1, &img->fence, VK_TRUE, UINT64_MAX);
+            pgraph_vk_wait_for_fences(r, 1, &img->fence, VK_TRUE, UINT64_MAX);
         }
         vkDestroyFence(r->device, img->fence, NULL);
         img->fence = VK_NULL_HANDLE;
@@ -2171,7 +2171,7 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
      * cycles back to a slot that is still in flight. */
     if (!disp->direct_present && img->fence_submitted) {
         int64_t image_fence_start = nv2a_stall_start();
-        VK_CHECK(vkWaitForFences(r->device, 1, &img->fence, VK_TRUE,
+        VK_CHECK(pgraph_vk_wait_for_fences(r, 1, &img->fence, VK_TRUE,
                                  UINT64_MAX));
         nv2a_stall_record(NV2A_STALL_DISPLAY_FENCE, image_fence_start, 0);
         img->fence_submitted = false;
@@ -2437,11 +2437,15 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
             &disp->render_finished[present_sync_index];
         VK_CHECK(vkResetFences(
             r->device, 1, &disp->present_fences[present_sync_index]));
+        uint64_t lag_display_id = nv2a_lag_next_id();
         int64_t display_submit_start = nv2a_stall_start();
         VK_CHECK(vkQueueSubmit(
             r->queue, 1, &submit_info,
             disp->present_fences[present_sync_index]));
         nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, display_submit_start, 0);
+        disp->lag_present_ids[present_sync_index] = lag_display_id;
+        nv2a_lag_event(NV2A_LAG_SUBMIT, display_submit_start,
+            lag_display_id, nv2a_lag_current(), 100, disp->render_idx, 0);
 
         uint32_t present_image_index = disp->render_idx;
         disp->image_in_flight[present_image_index] =
@@ -2457,6 +2461,9 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
         int64_t present_start = nv2a_stall_start();
         VkResult present_result = vkQueuePresentKHR(r->queue, &present_info);
         nv2a_stall_record(NV2A_STALL_DISPLAY_PRESENT, present_start, 0);
+        nv2a_lag_event(NV2A_LAG_PRESENT, present_start,
+            lag_display_id, nv2a_lag_current(),
+            (uint64_t)(int64_t)present_result, present_image_index, 0);
         present_success = vk_present_result_is_presented(present_result);
         if (nv2a_stall_profile_enabled && disp->reuse_identical_present) {
             static unsigned int result_logs;
@@ -2502,9 +2509,12 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
 #endif
     {
         VK_CHECK(vkResetFences(r->device, 1, &img->fence));
+        uint64_t lag_display_id = nv2a_lag_next_id();
         int64_t display_submit_start = nv2a_stall_start();
         VK_CHECK(vkQueueSubmit(r->queue, 1, &submit_info, img->fence));
         nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, display_submit_start, 0);
+        nv2a_lag_event(NV2A_LAG_SUBMIT, display_submit_start,
+            lag_display_id, nv2a_lag_current(), 100, disp->render_idx, 0);
         img->fence_submitted = true;
     }
     img->valid = true;

@@ -1281,6 +1281,11 @@ add_executable(test-uniform-update EXCLUDE_FROM_ALL
 target_include_directories(test-uniform-update PRIVATE "${REPO_ROOT}" "${REPO_ROOT}/include")
 target_compile_options(test-uniform-update PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(test-lag-trace EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-lag-trace.c")
+target_include_directories(test-lag-trace PRIVATE "${REPO_ROOT}")
+target_compile_options(test-lag-trace PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(test-uniform-value-compare EXCLUDE_FROM_ALL
   "${REPO_ROOT}/android/test/cpp/test-uniform-value-compare.c")
 target_include_directories(test-uniform-value-compare PRIVATE "${REPO_ROOT}")
@@ -1557,3 +1562,14 @@ target_link_libraries(xemu PRIVATE
   $<$<BOOL:${XEMU_ENABLE_VULKAN}>:SPIRV>
   ${zlib-lib}
 )
+
+add_executable(test-lag-recorder EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-lag-recorder.c"
+  "${REPO_ROOT}/hw/xbox/nv2a/pgraph/profile.c"
+  libintl_stub.c)
+target_include_directories(test-lag-recorder PRIVATE $<TARGET_PROPERTY:xemu_core,INCLUDE_DIRECTORIES>)
+target_compile_definitions(test-lag-recorder PRIVATE $<TARGET_PROPERTY:xemu_core,COMPILE_DEFINITIONS>)
+target_compile_options(test-lag-recorder PRIVATE -UNDEBUG -ffunction-sections -fdata-sections)
+target_link_options(test-lag-recorder PRIVATE -Wl,--gc-sections)
+target_link_libraries(test-lag-recorder PRIVATE glib-2.0 log android)
+add_dependencies(test-lag-recorder glib_ep)

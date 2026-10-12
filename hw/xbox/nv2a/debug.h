@@ -23,6 +23,7 @@
 #define HW_XBOX_NV2A_DEBUG_H
 
 #include <stdint.h>
+#include "hw/xbox/nv2a/pgraph/lag-trace.h"
 
 #define NV2A_XPRINTF(x, ...) do { \
     if (x) { \
@@ -414,6 +415,9 @@ static inline void nv2a_profile_inc_counter(enum NV2A_PROF_COUNTERS_ENUM cnt)
 #define NV2A_PHASE_TIMER_END(phase) do { \
     g_nv2a_stats.phase_working.phase##_ns += \
         nv2a_clock_ns() - _phase_t0_##phase; \
+    if (unlikely(nv2a_lag_enabled)) { \
+        nv2a_lag_cpu_span(NV2A_LAG_STAGE_##phase, _phase_t0_##phase / 1000); \
+    } \
 } while (0)
 
 #else /* !NV2A_PERF_LOG */
@@ -423,8 +427,13 @@ static inline void nv2a_profile_inc_counter(enum NV2A_PROF_COUNTERS_ENUM cnt)
     (void)cnt;
 }
 
-#define NV2A_PHASE_TIMER_BEGIN(phase) do { } while (0)
-#define NV2A_PHASE_TIMER_END(phase)  do { } while (0)
+#define NV2A_PHASE_TIMER_BEGIN(phase) \
+    int64_t _lag_t0_##phase = unlikely(nv2a_lag_enabled) ? nv2a_lag_start() : 0
+#define NV2A_PHASE_TIMER_END(phase) do { \
+    if (unlikely(_lag_t0_##phase)) { \
+        nv2a_lag_cpu_span(NV2A_LAG_STAGE_##phase, _lag_t0_##phase); \
+    } \
+} while (0)
 
 #endif /* NV2A_PERF_LOG */
 

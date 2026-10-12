@@ -177,6 +177,9 @@ static void *compile_worker_func(void *opaque)
 
         qemu_mutex_unlock(&r->compile_worker.lock);
 
+        uint64_t lag_previous = nv2a_lag_context(job->lag_id);
+        nv2a_lag_event(NV2A_LAG_WORKER, job->lag_queued_us, job->lag_id,
+                        job->lag_parent, 200 + job->type, 0, 0);
         switch (job->type) {
         case COMPILE_JOB_SHADER_MODULE:
             process_shader_module_job(r, job);
@@ -186,6 +189,7 @@ static void *compile_worker_func(void *opaque)
             break;
         }
 
+        nv2a_lag_context(lag_previous);
         g_free(job);
     }
 
@@ -194,7 +198,12 @@ static void *compile_worker_func(void *opaque)
 
 void pgraph_vk_compile_worker_enqueue(PGRAPHVkState *r, CompileJob *job)
 {
+    job->lag_id = nv2a_lag_next_id();
+    job->lag_parent = nv2a_lag_current();
+    job->lag_queued_us = nv2a_lag_start();
     qemu_mutex_lock(&r->compile_worker.lock);
+    nv2a_lag_event(NV2A_LAG_ENQUEUE, job->lag_queued_us, job->lag_id,
+        job->lag_parent, 200 + job->type, r->compile_worker.queue_depth, 0);
     QSIMPLEQ_INSERT_TAIL(&r->compile_worker.queue, job, entry);
     r->compile_worker.queue_depth++;
     qemu_cond_signal(&r->compile_worker.cond);

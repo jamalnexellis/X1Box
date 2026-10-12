@@ -22,6 +22,8 @@
 #ifdef __ANDROID__
 #include <android/log.h>
 #include <sys/system_properties.h>
+#include <sys/syscall.h>
+#include "lag-trace-buffer.h"
 
 /* Initialized before Vulkan's worker threads start, never changed afterwards.
  * GMutex also covers shader worker records. Timings are host wall time: nested
@@ -54,6 +56,7 @@ void nv2a_stall_profile_init(void)
     char property[PROP_VALUE_MAX] = {};
     __system_property_get("debug.xemu.vk.stall_profile", property);
     nv2a_stall_profile_enabled = strcmp(property, "1") == 0;
+    nv2a_lag_init();
     __android_log_print(ANDROID_LOG_INFO, "xemu-stall",
                         "host graphics stall profile=%d slow_event_quota=4096",
                         nv2a_stall_profile_enabled);
@@ -66,6 +69,10 @@ void nv2a_stall_record(NV2AStallPhase phase, int64_t start_us, uint64_t bytes)
     }
     int64_t end_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
     uint64_t elapsed = MAX(end_us - start_us, 0);
+    nv2a_lag_phase(phase, start_us, end_us, bytes);
+    if (!nv2a_stall_profile_enabled) {
+        return;
+    }
     bool log_slow = false;
     assert(phase < NV2A_STALL_PHASE_COUNT);
     g_mutex_lock(&stall_profile_lock);
@@ -124,6 +131,260 @@ void nv2a_stall_frame(int64_t now_us)
         g_string_free(lines[part], true);
     }
 }
+
+/* Per-capture fixed memory. Producers only copy records under a short lock;
+ * the detached exporter owns its snapshot and writes after capture stops.
+ * Never silently wrap over old records: overflow is counted in the footer. */
+bool nv2a_lag_enabled;
+enum { LAG_CAPACITY = 262144, LAG_PHASE_BASE = 256, LAG_STAGE_BASE = 512 };
+static const char *const lag_stage_names[] = {
+    "stage_draw_desc_set",
+    "stage_draw_dispatch",
+    "stage_draw_pipeline",
+    "stage_draw_prim_rw",
+    "stage_draw_setup",
+    "stage_draw_vk_cmd",
+    "stage_draw_vtx_attr",
+    "stage_draw_vtx_sync",
+    "stage_finish",
+    "stage_finish_fence",
+    "stage_finish_submit",
+    "stage_flip_idle",
+    "stage_pipe_bind_shd",
+    "stage_pipe_bind_tex",
+    "stage_pipe_lookup",
+    "stage_shader_compile",
+    "stage_surface_update",
+    "stage_texture_upload",
+};
+static GMutex lag_lock;
+static NV2ALagBuffer lag_buffer;
+static uint64_t lag_token, lag_seen_token, lag_frame, lag_id;
+static int64_t lag_previous_flip, lag_last_poll;
+static int lag_recording, lag_exporting;
+static __thread uint64_t lag_thread_context;
+static __thread uint32_t lag_tid;
+static const char *const lag_names[] = {
+    "flip", "cb_begin", "cb_end", "enqueue", "worker", "submit",
+    "fence", "slot_wait", "ack", "idle_wait", "completion_wait",
+    "gpu_main", "gpu_aux", "gpu_query", "calibration", "gpu_caps",
+    "pfifo_run", "pfifo_idle", "mmio_read", "fence_write", "vblank",
+    "present", "mmio_lock", "pipeline_feedback"
+};
+typedef struct LagExport {
+    NV2ALagBuffer buffer;
+    uint64_t token;
+    int64_t end_us;
+    char *directory;
+} LagExport;
+
+static void lag_append(unsigned kind, int64_t start_us, int64_t end_us,
+                       uint64_t id, uint64_t link, uint64_t a, uint64_t b,
+                       uint64_t c)
+{
+    if (!qatomic_read(&lag_recording)) {
+        return;
+    }
+    if (!lag_tid) {
+        lag_tid = syscall(SYS_gettid);
+    }
+    NV2ALagEvent event = { .kind = kind, .start_us = start_us,
+        .end_us = end_us, .id = id, .link = link, .a = a, .b = b, .c = c,
+        .frame = qatomic_read(&lag_frame), .tid = lag_tid };
+    g_mutex_lock(&lag_lock);
+    if (qatomic_read(&lag_recording)) {
+        nv2a_lag_buffer_append(&lag_buffer, event);
+    }
+    g_mutex_unlock(&lag_lock);
+}
+
+static gpointer lag_export(gpointer opaque)
+{
+    LagExport *snapshot = opaque;
+    char *path = g_strdup_printf("%s/lag-%d-%" PRIu64 ".csv",
+                                snapshot->directory, getpid(), snapshot->token);
+    FILE *out = fopen(path, "wx");
+    bool ok = out != NULL;
+    if (out) {
+        fprintf(out, "# xemu_lag schema=44 token=%" PRIu64
+            " pid=%d begin_us=%" PRId64 " end_us=%" PRId64
+            " phase_min_us=50 capacity=%d clock=MONOTONIC\n",
+            snapshot->token, getpid(), snapshot->buffer.begin_us,
+            snapshot->end_us, LAG_CAPACITY);
+        fputs("seq,tid,kind,start_us,end_us,frame,id,link,a,b,c\n", out);
+        for (size_t i = 0; i < snapshot->buffer.count; i++) {
+            const NV2ALagEvent *e = &snapshot->buffer.events[i];
+            const char *name = e->kind >= LAG_STAGE_BASE ?
+                lag_stage_names[e->kind - LAG_STAGE_BASE] :
+                e->kind >= LAG_PHASE_BASE ?
+                stall_phase_names[e->kind - LAG_PHASE_BASE] : lag_names[e->kind];
+            fprintf(out, "%" PRIu64 ",%u,%s,%" PRId64 ",%" PRId64
+                ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+                ",%" PRIu64 ",%" PRIu64 "\n",
+                e->seq, e->tid, name, e->start_us, e->end_us,
+                e->frame, e->id, e->link, e->a, e->b, e->c);
+        }
+        fprintf(out, "# complete records=%zu dropped=%" PRIu64 "\n",
+                snapshot->buffer.count, snapshot->buffer.dropped);
+        ok = !ferror(out);
+        if (fclose(out)) { ok = false; }
+    }
+    __android_log_print(ok ? ANDROID_LOG_INFO : ANDROID_LOG_ERROR, "xemu-lag",
+        "lag_trace_end token=%" PRIu64 " records=%zu dropped=%" PRIu64
+        " written=%d path=%s", snapshot->token, snapshot->buffer.count,
+        snapshot->buffer.dropped, ok, path);
+    g_free(path);
+    g_free(snapshot->buffer.events);
+    g_free(snapshot->directory);
+    g_free(snapshot);
+    qatomic_set(&lag_exporting, 0);
+    return NULL;
+}
+
+void nv2a_lag_init(void)
+{
+    QEMU_BUILD_BUG_ON(ARRAY_SIZE(lag_names) != NV2A_LAG_KIND_COUNT);
+    QEMU_BUILD_BUG_ON(ARRAY_SIZE(lag_stage_names) != NV2A_LAG_STAGE_COUNT);
+    char property[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.lag.trace", property);
+    const char *directory = getenv("XEMU_LAG_TRACE_DIR");
+    nv2a_lag_enabled = !strcmp(property, "1") && directory && *directory;
+    __android_log_print(ANDROID_LOG_INFO, "xemu-lag",
+        "lag trace=%d schema=44 capacity=%d max_capture_us=30000000",
+        nv2a_lag_enabled, LAG_CAPACITY);
+}
+
+int64_t nv2a_lag_start(void)
+{
+    return unlikely(nv2a_lag_enabled) ?
+        qemu_clock_get_us(QEMU_CLOCK_REALTIME) : 0;
+}
+
+uint64_t nv2a_lag_next_id(void)
+{
+    return nv2a_lag_enabled ? qatomic_fetch_inc(&lag_id) + 1 : 0;
+}
+uint64_t nv2a_lag_context(uint64_t id)
+{
+    uint64_t previous = lag_thread_context;
+    if (nv2a_lag_enabled) { lag_thread_context = id; }
+    return previous;
+}
+uint64_t nv2a_lag_current(void) { return lag_thread_context; }
+
+void nv2a_lag_event(NV2ALagKind kind, int64_t start_us, uint64_t id,
+                    uint64_t link, uint64_t a, uint64_t b, uint64_t c)
+{
+    if (!start_us || !qatomic_read(&lag_recording)) { return; }
+    assert(kind < NV2A_LAG_KIND_COUNT);
+    int64_t end_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    if ((kind == NV2A_LAG_MMIO_LOCK || kind == NV2A_LAG_PFIFO_RUN ||
+         kind == NV2A_LAG_PFIFO_IDLE || kind == NV2A_LAG_IDLE_WAIT) &&
+        end_us - start_us < 50) { return; }
+    lag_append(kind, start_us, end_us, id, link, a, b, c);
+}
+
+void nv2a_lag_phase(unsigned phase, int64_t start_us, int64_t end_us,
+                    uint64_t bytes)
+{
+    if (end_us - start_us < 50 || !qatomic_read(&lag_recording)) { return; }
+    assert(phase < NV2A_STALL_PHASE_COUNT);
+    lag_append(LAG_PHASE_BASE + phase, start_us, end_us,
+               lag_thread_context, 0, bytes, 0, 0);
+}
+
+void nv2a_lag_cpu_span(NV2ALagCpuStage stage, int64_t start_us)
+{
+    if (!start_us || !qatomic_read(&lag_recording)) { return; }
+    int64_t end_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    if (end_us - start_us < 50) { return; }
+    assert(stage < NV2A_LAG_STAGE_COUNT);
+    lag_append(LAG_STAGE_BASE + stage, start_us, end_us,
+               lag_thread_context, 0, 0, 0, 0);
+}
+
+void nv2a_lag_mmio_read(uint64_t addr, uint64_t value)
+{
+    static __thread uint64_t previous_addr, previous_value, reads, capture_token;
+    static __thread int64_t begin_us;
+    if (!qatomic_read(&lag_recording)) { begin_us = 0; reads = 0; return; }
+    uint64_t token = qatomic_read(&lag_token);
+    if (capture_token != token) { begin_us = 0; reads = 0; capture_token = token; }
+    if (begin_us && addr == previous_addr && value == previous_value && (reads & 63)) {
+        ++reads;
+        return;
+    }
+    int64_t now = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    if (!begin_us) {
+        begin_us = now; previous_addr = addr; previous_value = value; reads = 1;
+        lag_append(NV2A_LAG_MMIO_READ, now, now, 0, 0, addr, value, 1);
+        return;
+    }
+    if (addr != previous_addr || value != previous_value || now - begin_us >= 1000) {
+        if (reads >= 8) {
+            lag_append(NV2A_LAG_MMIO_READ, begin_us, now, 0, 0,
+                       previous_addr, previous_value, reads);
+        }
+        if (addr != previous_addr || value != previous_value) {
+            lag_append(NV2A_LAG_MMIO_READ, now, now, 0, 0, addr, value, 1);
+        }
+        begin_us = now; previous_addr = addr; previous_value = value; reads = 1;
+    } else { ++reads; }
+}
+
+void nv2a_lag_poll(int64_t now_us)
+{
+    if (!nv2a_lag_enabled) { return; }
+    uint64_t frame = qatomic_fetch_inc(&lag_frame) + 1;
+    lag_append(NV2A_LAG_FLIP, lag_previous_flip ? lag_previous_flip : now_us,
+               now_us, frame, lag_thread_context, 0, 0, 0);
+    lag_previous_flip = now_us;
+    if (now_us - lag_last_poll < 100000) { return; }
+    lag_last_poll = now_us;
+    char property[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.lag.capture", property);
+    char *end;
+    uint64_t requested = strtoull(property, &end, 10);
+    if (end == property || *end || requested > UINT32_MAX) { requested = 0; }
+    if (qatomic_read(&lag_recording) &&
+        (requested != lag_token || now_us >= lag_buffer.deadline_us)) {
+        LagExport *snapshot = g_new0(LagExport, 1);
+        g_mutex_lock(&lag_lock);
+        qatomic_set(&lag_recording, 0);
+        snapshot->buffer = lag_buffer;
+        memset(&lag_buffer, 0, sizeof(lag_buffer));
+        g_mutex_unlock(&lag_lock);
+        snapshot->token = lag_token;
+        snapshot->end_us = MIN(qemu_clock_get_us(QEMU_CLOCK_REALTIME), snapshot->buffer.deadline_us);
+        snapshot->directory = g_strdup(getenv("XEMU_LAG_TRACE_DIR"));
+        qatomic_set(&lag_exporting, 1);
+        g_thread_unref(g_thread_new("lag.export", lag_export, snapshot));
+    }
+    if (!qatomic_read(&lag_recording) && !qatomic_read(&lag_exporting) &&
+        requested && requested != lag_seen_token) {
+        NV2ALagEvent *events = g_try_new(NV2ALagEvent, LAG_CAPACITY);
+        lag_seen_token = requested;
+        if (!events) {
+            __android_log_print(ANDROID_LOG_ERROR, "xemu-lag", "lag allocation failed");
+            return;
+        }
+        /* Fault in pages before the arming acknowledgement, outside driving. */
+        for (size_t page = 0; page < sizeof(*events) * LAG_CAPACITY; page += 4096) {
+            ((volatile unsigned char *)events)[page] = 0;
+        }
+        now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+        g_mutex_lock(&lag_lock);
+        lag_buffer = (NV2ALagBuffer){ .events = events, .capacity = LAG_CAPACITY,
+            .begin_us = now_us, .deadline_us = now_us + 30000000 };
+        qatomic_set(&lag_token, requested);
+        qatomic_set(&lag_recording, 1);
+        g_mutex_unlock(&lag_lock);
+        __android_log_print(ANDROID_LOG_INFO, "xemu-lag",
+            "lag_trace_begin token=%" PRIu64 " begin_us=%" PRId64,
+            requested, now_us);
+    }
+}
+
 #endif
 
 #if defined(XBOX) && (!defined(XEMU_OPT_TB_CACHE_HINTS) || XEMU_OPT_TB_CACHE_HINTS)
@@ -136,6 +397,7 @@ NV2AStats g_nv2a_stats;
 void nv2a_profile_increment(void)
 {
     int64_t now = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    nv2a_lag_poll(now);
     nv2a_stall_frame(now);
     const int64_t fps_update_interval = 250000;
     g_nv2a_stats.last_flip_time = now;

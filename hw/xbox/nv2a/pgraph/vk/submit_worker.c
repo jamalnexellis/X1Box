@@ -62,13 +62,13 @@ static void *submit_worker_func(void *opaque)
         qatomic_inc(&r->submit_count);
 
         if (!job->deferred) {
-            VK_CHECK(vkWaitForFences(r->device, 1, &job->fence,
+            VK_CHECK(pgraph_vk_wait_for_fences(r, 1, &job->fence,
                                      VK_TRUE, UINT64_MAX));
             if (job->post_fence_cb) {
                 job->post_fence_cb(r, job, job->post_fence_opaque);
             }
         } else if (job->post_fence_cb) {
-            VK_CHECK(vkWaitForFences(r->device, 1, &job->fence,
+            VK_CHECK(pgraph_vk_wait_for_fences(r, 1, &job->fence,
                                      VK_TRUE, UINT64_MAX));
             job->post_fence_cb(r, job, job->post_fence_opaque);
         }

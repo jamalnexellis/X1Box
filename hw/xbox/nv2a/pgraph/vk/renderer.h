@@ -479,6 +479,8 @@ typedef enum {
 
 typedef struct CompileJob {
     CompileJobType type;
+    uint64_t lag_id, lag_parent;
+    int64_t lag_queued_us;
     QSIMPLEQ_ENTRY(CompileJob) entry;
     union {
         struct {
@@ -639,6 +641,7 @@ typedef enum {
 typedef struct RenderCommand {
     RenderCommandType type;
     int64_t queued_us; /* Zero when host stall profiling is disabled. */
+    uint64_t lag_id, lag_parent; /* Host-only identities, never guest state. */
 
     union {
         struct {
@@ -878,6 +881,7 @@ typedef struct PGRAPHVkDisplayState {
     VkSemaphore image_available[NUM_DISPLAY_IMAGES];
     VkSemaphore render_finished[NUM_DISPLAY_IMAGES];
     VkFence present_fences[NUM_DISPLAY_IMAGES];
+    uint64_t lag_present_ids[NUM_DISPLAY_IMAGES];
     VkFence image_in_flight[NUM_DISPLAY_IMAGES];
     uint32_t present_frame;
 
@@ -1139,6 +1143,14 @@ typedef struct PGRAPHVkState {
     VkFence frame_fences[NUM_SUBMIT_FRAMES];
     bool frame_submitted[NUM_SUBMIT_FRAMES];
     bool frame_enqueued[NUM_SUBMIT_FRAMES];
+    uint64_t lag_aux_id, lag_batch_id;
+    uint64_t lag_cb_ids[NUM_SUBMIT_FRAMES];
+    uint64_t lag_readback_ids[NUM_SUBMIT_FRAMES];
+    bool lag_aux_ts_recorded[NUM_SUBMIT_FRAMES];
+    VkQueryPool lag_aux_ts_pool;
+    unsigned lag_timestamp_bits;
+    bool lag_calibrated_supported;
+    int64_t lag_last_calibration_us;
     VkSemaphore aux_draw_semaphores[NUM_SUBMIT_FRAMES];
     VkSemaphore stall_chain_semaphore;
     bool stall_chain_pending;
@@ -1517,6 +1529,17 @@ typedef struct PGRAPHVkState {
 
     RenderThread render_thread;
 } PGRAPHVkState;
+
+VkResult pgraph_vk_lag_wait_for_fences(PGRAPHVkState *r, uint32_t count,
+    const VkFence *fences, VkBool32 wait_all, uint64_t timeout);
+static inline VkResult pgraph_vk_wait_for_fences(PGRAPHVkState *r, uint32_t count,
+    const VkFence *fences, VkBool32 wait_all, uint64_t timeout)
+{
+    return unlikely(nv2a_lag_enabled) ?
+        pgraph_vk_lag_wait_for_fences(r, count, fences, wait_all, timeout) :
+        vkWaitForFences(r->device, count, fences, wait_all, timeout);
+}
+
 
 static inline StorageBuffer *get_staging_buffer(PGRAPHVkState *r, int buffer_id)
 {

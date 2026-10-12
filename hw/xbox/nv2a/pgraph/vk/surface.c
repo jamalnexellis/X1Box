@@ -184,7 +184,7 @@ bool pgraph_vk_download_surfaces_in_range_if_dirty(PGRAPHState *pg,
      * (unsubmitted) aux CB. */
     if (r->num_deferred_downloads > 0 && r->deferred_downloads_frame >= 0) {
         OPT_STAT_INC(sd_complete_def_coalesced);
-        VK_CHECK(vkWaitForFences(r->device, 1,
+        VK_CHECK(pgraph_vk_wait_for_fences(r, 1,
                                  &r->frame_fences[r->deferred_downloads_frame],
                                  VK_TRUE, UINT64_MAX));
         pgraph_vk_complete_staged_downloads(d, r);
@@ -592,14 +592,14 @@ void pgraph_vk_download_surface_complete_deferred(NV2AState *d)
          */
         int fi = r->display_predownload_frame_index;
         if (qatomic_read(&r->frame_submitted[fi])) {
-            VK_CHECK(vkWaitForFences(r->device, 1, &r->frame_fences[fi],
+            VK_CHECK(pgraph_vk_wait_for_fences(r, 1, &r->frame_fences[fi],
                                      VK_TRUE, UINT64_MAX));
         }
     } else if (r->deferred_downloads_frame >= 0) {
         /* Downloads were already submitted as part of a prior finish.
          * Wait for that frame's fence — no new submit needed. */
         OPT_STAT_INC(sd_complete_def_coalesced);
-        VK_CHECK(vkWaitForFences(r->device, 1,
+        VK_CHECK(pgraph_vk_wait_for_fences(r, 1,
                                  &r->frame_fences[r->deferred_downloads_frame],
                                  VK_TRUE, UINT64_MAX));
     } else {

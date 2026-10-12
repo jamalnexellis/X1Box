@@ -581,8 +581,11 @@ static void add_optional_device_extension_names(
     VK_LOG_ERROR("inline small uniform comparisons=%d",
                  r->small_uniform_compare && r->exact_uniform_updates);
     VK_LOG_ERROR("exact descriptor bind memo=%d", r->descriptor_bind_memo);
+    r->lag_calibrated_supported = nv2a_lag_enabled &&
+        add_extension_if_available(available_extensions, enabled_extension_names,
+                                   VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
     /* Feedback is diagnostic only. No extension or pNext cost in FPS runs. */
-    r->pipeline_creation_feedback_supported = nv2a_stall_profile_enabled &&
+    r->pipeline_creation_feedback_supported = (nv2a_stall_profile_enabled || nv2a_lag_enabled) &&
         (r->device_props.apiVersion >= VK_API_VERSION_1_3 ||
          add_extension_if_available(available_extensions, enabled_extension_names,
                                    VK_EXT_PIPELINE_CREATION_FEEDBACK_EXTENSION_NAME));
@@ -924,6 +927,13 @@ static bool create_logical_device(PGRAPHState *pg, Error **errp)
         .pQueuePriorities = &queuePriority,
     };
 
+    // Timestamp support belongs to the actual selected queue family.
+    uint32_t lag_family_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(r->physical_device, &lag_family_count, NULL);
+    VkQueueFamilyProperties *lag_families = g_new(VkQueueFamilyProperties, lag_family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(r->physical_device, &lag_family_count, lag_families);
+    r->lag_timestamp_bits = lag_families[indices.queue_family].timestampValidBits;
+    g_free(lag_families);
     // Check device features
     VkPhysicalDeviceFeatures physical_device_features;
     vkGetPhysicalDeviceFeatures(r->physical_device, &physical_device_features);

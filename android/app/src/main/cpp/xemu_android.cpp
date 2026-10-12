@@ -1641,6 +1641,19 @@ extern "C" int SDL_main(int argc, char* argv[]) {
       arg_storage.emplace_back("tcp:127.0.0.1:9009");
       LogInfo("Guest debugger listening on loopback port 9009");
     }
+    // Detailed dependency traces are private, bounded and off by default.
+    char lag_trace[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.lag.trace", lag_trace);
+    unsetenv("XEMU_LAG_TRACE_DIR");
+    if (strcmp(lag_trace, "1") == 0) {
+      const char* internal = SDL_GetAndroidInternalStoragePath();
+      if (internal && *internal) {
+        std::string directory = std::string(internal) + "/lag-trace";
+        if (EnsureDirExists(directory)) {
+          setenv("XEMU_LAG_TRACE_DIR", directory.c_str(), 1);
+        }
+      }
+    }
     // Opt-in developer profiling: relate generated ARM PCs to Xbox x86 PCs.
     // Keep dumps in internal app storage and out of normal gameplay sessions.
     char jit_profile[PROP_VALUE_MAX] = {};

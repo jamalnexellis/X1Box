@@ -167,6 +167,8 @@ static void process_finish(PGRAPHVkState *r, RenderCommand *cmd)
     VK_CHECK(vkQueueSubmit(r->queue, ARRAY_SIZE(submit_infos), submit_infos,
                            cmd->finish.fence));
     nv2a_stall_record(NV2A_STALL_QUEUE_SUBMIT, submit_start, 0);
+    nv2a_lag_event(NV2A_LAG_SUBMIT, submit_start, cmd->lag_id, cmd->lag_parent,
+                    cmd->finish.reason, cmd->finish.frame_index, cmd->finish.deferred);
     if (r->render_thread.blocking_submit_ack) {
         /* The predicate and notification share a mutex with the waiter.
          * Publish only after vkQueueSubmit succeeds, as in the spin path. */
@@ -193,6 +195,8 @@ static void process_finish(PGRAPHVkState *r, RenderCommand *cmd)
 #endif
         VK_CHECK(wait_result);
         nv2a_stall_record(NV2A_STALL_GPU_FENCE, fence_start, 0);
+        nv2a_lag_event(NV2A_LAG_FENCE, fence_start, cmd->lag_id, 0,
+                        cmd->finish.frame_index, 0, 0);
         if (cmd->finish.post_fence_cb) {
             cmd->finish.post_fence_cb(r, NULL, cmd->finish.post_fence_opaque);
         }
@@ -212,6 +216,8 @@ static void process_finish(PGRAPHVkState *r, RenderCommand *cmd)
 #endif
         VK_CHECK(wait_result);
         nv2a_stall_record(NV2A_STALL_GPU_FENCE, fence_start, 0);
+        nv2a_lag_event(NV2A_LAG_FENCE, fence_start, cmd->lag_id, 0,
+                        cmd->finish.frame_index, 0, 0);
         cmd->finish.post_fence_cb(r, NULL, cmd->finish.post_fence_opaque);
     }
 
@@ -270,6 +276,9 @@ static void *render_thread_func(void *opaque)
 
         qemu_mutex_unlock(&rt->lock);
 
+        uint64_t lag_previous = nv2a_lag_context(cmd->lag_id);
+        nv2a_lag_event(NV2A_LAG_WORKER, cmd->queued_us, cmd->lag_id,
+                        cmd->lag_parent, cmd->type, 0, 0);
         nv2a_stall_record(NV2A_STALL_RENDER_QUEUE, cmd->queued_us, 0);
         bool stop = false;
         switch (cmd->type) {
@@ -348,6 +357,7 @@ static void *render_thread_func(void *opaque)
             break;
         }
 
+        nv2a_lag_context(lag_previous);
         g_free(cmd);
         qemu_mutex_lock(&rt->lock);
         rt->active = false;
@@ -366,7 +376,12 @@ void pgraph_vk_render_thread_enqueue(PGRAPHVkState *r, RenderCommand *cmd)
     RenderThread *rt = &r->render_thread;
 
     cmd->queued_us = nv2a_stall_start();
+    if (!cmd->lag_id) { cmd->lag_id = nv2a_lag_next_id(); }
+    cmd->lag_parent = nv2a_lag_current();
+    if (cmd->lag_parent == cmd->lag_id) { cmd->lag_parent = 0; }
     qemu_mutex_lock(&rt->lock);
+    nv2a_lag_event(NV2A_LAG_ENQUEUE, cmd->queued_us, cmd->lag_id,
+                    cmd->lag_parent, cmd->type, rt->queue_depth, 0);
     QSIMPLEQ_INSERT_TAIL(&rt->queue, cmd, entry);
     rt->queue_depth++;
     qemu_cond_signal(&rt->cond);
@@ -386,6 +401,8 @@ void pgraph_vk_render_thread_wait_submitted(PGRAPHVkState *r, int frame)
         }
     }
     nv2a_stall_record(NV2A_STALL_SUBMIT_ACK, ack_start, 0);
+    nv2a_lag_event(NV2A_LAG_ACK, ack_start, nv2a_lag_current(),
+                    r->lag_cb_ids[frame], frame, rt->blocking_submit_ack, 0);
 }
 
 void pgraph_vk_render_thread_wait_idle(PGRAPHVkState *r)
@@ -398,8 +415,10 @@ void pgraph_vk_render_thread_wait_idle(PGRAPHVkState *r)
 
     RenderThread *rt = &r->render_thread;
 
+    int64_t lag_start = nv2a_lag_start();
     vk_render_wait_idle(&rt->lock, &rt->idle_cond, &rt->queue_depth,
                         &rt->active);
+    nv2a_lag_event(NV2A_LAG_IDLE_WAIT, lag_start, nv2a_lag_current(), 0, 0, 0, 0);
 }
 
 void pgraph_vk_render_thread_init(PGRAPHVkState *r)

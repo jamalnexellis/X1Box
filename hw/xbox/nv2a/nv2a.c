@@ -238,6 +238,10 @@ static struct {
 static void nv2a_vblank_profile(NV2AState *d, int64_t now, int64_t period,
                                bool deferred, bool unlocked)
 {
+    nv2a_lag_event(NV2A_LAG_VBLANK, now / 1000, nv2a_lag_current(), 0,
+        deferred | (unlocked << 1) |
+        (!!qatomic_read(&d->pgraph.waiting_for_flip) << 2),
+        MAX(now - d->vblank_next_target_ns, 0), period);
     if (!nv2a_stall_profile_enabled) {
         return;
     }

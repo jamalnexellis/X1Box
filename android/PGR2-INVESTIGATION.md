@@ -3369,3 +3369,67 @@ twenty-five properties at 19:54:22 Madrid, before 19:56:26. Independent checks
 verify record hashes, actual perf43 APK identity, EEPROM ownership/mode,
 stopped emulator and untouched original Android user-10 installation. Raw
 game/cache/profile/capture data remain private; Judge/CI/CD remain disabled.
+
+### Perf44 bounded dependency-diagnostic preparation
+
+The user requested detailed logging to attribute the remaining lag before
+another optimization experiment. Perf44 adds an Android-only, default-off
+dependency recorder; it makes no game-specific instruction or rendering
+shortcut. See [LAG-DIAGNOSTICS.md](LAG-DIAGNOSTICS.md) for the schema,
+interpretation limits and capture protocol.
+
+Unique batch/worker/submission identities connect preparation, queue residence,
+submission acknowledgement, fence/slot/completion waits and presentation.
+Eighteen named CPU stages and the existing texture/shader/readback phases
+retain detailed intervals at or above 50 us. All renderer fence-wait routes
+preserve their original arguments and results. PFIFO condition snapshots,
+VBlank observations, repetitive NV2A register reads/value transitions and
+PGRAPH fence publication supplement scheduler and optional CPU/JIT captures.
+This does not intercept all guest RAM polling or identify semantic game
+objects such as a particular building.
+
+Main and auxiliary command-buffer timestamp intervals retain their submission
+identities. Queries are read after existing completion points, without an
+extra per-frame wait. The selected queue's valid bits and timestamp period
+are recorded, wrap uses unsigned modular arithmetic, and optional EXT
+calibration retains DEVICE/CLOCK_MONOTONIC correspondence and maximum
+deviation. Missing calibration gives relative durations only. GPU intervals
+include dependencies; nested and cross-thread durations remain non-additive.
+
+Captures are armed after race loading, limited to 30 seconds and 262,144
+records (20 MiB), and exported from a detached thread after recording stops.
+Pages are touched before the arming acknowledgement. Overflow is counted,
+never silently overwritten. The analyzer rejects incomplete exports, lost or
+miscounted records, invalid bounds and inconsistent timestamp metadata, and
+withholds absolute GPU alignment when it contradicts host observations.
+It outputs per-frame suspects, wait/submission links and a Perfetto-compatible
+timeline rather than automatically declaring a root cause.
+
+The host ASan/UBSan buffer/timestamp fixture and its arm64 version pass. The
+timestamp fixture checks 118,784 wrap cases across all 36--64-bit widths plus
+invalid-width and bounded-storage cases. Six generated Python tests cover
+dependency links, calibrated/uncalibrated timestamps, contradictory clocks,
+driving bounds and incomplete/lost records. On the phone, a fixture links the
+actual recorder implementation: four concurrent producers export 16,001
+records with 4,000 distinct command identities and a subsequent independent
+capture exports two records. Both have zero dropped records and pass the
+same analyzer; temporary trace properties are restored. This fixture opens
+no game and does not change app data or controls.
+
+The private moving harness is prepared for 3x references, warm 1x/3x captures,
+cold-resource 3x and a repeated warm case, with optional CPU sampling/JIT maps.
+Screenshots are outside timed driving, native input markers delimit analysis,
+and scheduling/frequency collection is separate from unprofiled FPS results.
+Fresh protected sessions preserve and restore all 27 properties and current
+data/settings, retain exact helper failures and reserve restoration time.
+Offline scheduler analysis runs after the phone is released. These race/GPU
+captures have not yet run; this preparation establishes no FPS gain, sustained
+30 FPS, full-game graphics compatibility or complete critical-path attribution.
+
+The locally built and signed separate-package APK is version 73,
+`1.2.9-pgr2-perf44`, SHA-256
+`10d74450d9fd2f863a68ce0b8381ec8646de83ee31fd84d90cc4c9d797294ebe`.
+Its packaged and unstripped native ELF build IDs agree:
+`3cada00d6b37dd269dcccad011a0a89492d499f7`. Eighty-nine selected build inputs
+are checked against the saved build snapshot and committed source. Judge and
+CI/CD remain disabled; raw phone/game/driver/capture data stay private.
