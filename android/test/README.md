@@ -459,3 +459,12 @@ packing equivalence for the generated inputs; they do not exercise every
 shader binding, queued draw or game. Measure unprofiled moving gameplay with
 identical cache seeds and settings, and review graphics separately before
 accepting an FPS improvement or enabling the route by default.
+
+When collecting timestamped JIT attribution, read the map and dump from the
+preserved stopped test directory after restoration and verify source hashes
+before/after each read. Sequential reads from a running translator can contain
+different numbers of blocks. Select the actual native library build ID and
+check temporal load records; reject unsupported overlapping code intervals
+instead of silently assigning an old block. Keep sampling/JIT diagnostics out
+of unprofiled FPS comparisons and retain warning/sample-loss evidence. A
+kernel-symbol warning is not permission to change device security settings.

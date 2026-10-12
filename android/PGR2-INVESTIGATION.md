@@ -3003,6 +3003,105 @@ Their independent fresh records restore their own HDD/preferences/EEPROM
 hashes and all twenty-three properties, with the emulator stopped and the
 original Android user-10 installation untouched. The private harness now
 records the rejected window and startup log before restoration, to distinguish
-menu-transition problems from a real foreground loss. No perf41 FPS benefit
-or sustained original-speed result has yet been established. Judge/CI/CD
+menu-transition problems from a real foreground loss. At that point no perf41
+FPS benefit or sustained original-speed result had been established. Judge/CI/CD
 remain disabled and raw game/profile/cache data stay private.
+
+### Perf41 resumed moving comparison and CPU evidence
+
+The next protected attempt identifies `NotificationShade` above the correctly
+started emulator. It restores without contributing a measurement. After closing
+the panel, three complete unprofiled cases run; the first attempted final-off
+case loses foreground at its grid capture and is discarded. A fresh protected
+session completes that final reference within the original eight-minute limit.
+The private harness closes a notification panel only when the focused app is
+the test emulator and keyguard is unlocked, then verifies emulator focus again.
+It still rejects other apps and lock screens. None of the six accepted cases
+records a panel-close event during its measurement.
+
+All four unprofiled cases use identical 3x settings, the same cold opaque
+Vulkan cache, actual driver identity, 185/193 warm shader modules and the
+144-recipe seed. All recipes warm with zero failures and no shader-cache
+invalidation. CPU/JIT and graphics profiling are disabled for the FPS cases.
+Each has four complete five-second flip windows inside the native
+twenty-four-second throttle/steering plan:
+
+| Exact uniform updates | Case | Descriptive FPS |
+| --- | --- | ---: |
+| Off | A | 26.208 |
+| On | A | 28.512 |
+| On | B | 27.139 |
+| Off | B, resumed | 25.233 |
+
+Off pools to 25.721 FPS and on to 27.825 FPS, an observed 8.18% difference.
+This is a favorable short-start result supported by the CPU evidence below;
+countdown, trajectory/contact variation and the resumed final reference limit
+causal inference and generalization. Off window means range 20.367--28.611 FPS
+and on means 25.135--29.130 FPS. All sixteen are below 29.7 FPS. Sustained
+original 30 FPS remains unverified. Scanout is 1920x1440 at 3x and native
+presentation is 2340x1080. The route remains opt-in pending longer gameplay
+and broader guest coverage.
+
+A separate protected off/on pair enables CPU-cycle sampling, private timestamped
+JIT mapping and graphics/scheduler diagnostics. It is excluded from the FPS
+comparison because of the instrumentation overhead. Actual APK/unstripped
+native build IDs match (`482ba2803feda677ee1cf425a5cac7387fc3915f`). Live map
+and dump reads can differ while translation continues, so final attribution
+uses the preserved stopped directory after restoration, with before/after
+source hashes matching the downloaded bytes. The parser checks load timestamps
+and rejects overlapping distinct JIT bases. Off/on have 59,443/59,291 loads,
+zero reused start addresses and 290,824/280,943 selected samples. Sampling
+records zero lost samples off and 31 lost kernel samples on, with zero lost
+userspace samples. Kernel-symbol access remains restricted; no security or
+kernel setting is changed.
+
+PFIFO copy/move samples fall from 15.39% to 10.29% of that thread's cycles.
+Copies attributed to `apply_uniform_updates` fall from 4.27% to 0.40%; bulk
+copies in `pgraph_glsl_set_vsh_uniform_values` go from 1.70% to no attributed
+samples. These are sampled shares, not an additive wall-time saving. During
+24.315/24.267 seconds of input, PFIFO runs for 14.723/14.115 seconds and vCPU
+for 20.760/21.284 seconds (85.38%/87.71% of one core). MONOTONIC offsets have
+105/51 ns spreads and neither scheduler trace has positive error/data-loss
+counters. Threads overlap and a busy vCPU can still be executing guest polls;
+these numbers do not establish useful guest work or a complete critical path.
+
+The instrumented starts contain 597/654 complete moving frame intervals.
+Off/on median intervals are 37.267/34.301 ms, p95 67.680/48.669 ms,
+p99 86.017/73.130 ms and maxima 140.217/100.331 ms. Intervals over 50 ms
+number 76/30. The observed distribution is favorable, but one diagnostic per
+mode, differing movement and instrumented timing cannot establish sustained
+unprofiled stability. Long pauses remain.
+
+Ordinary draw-pipeline feedback is valid for 28/29 creations inside input
+bounds, with 27/28 cache hits and one miss each. Driver-reported creation totals
+are 60.836/52.158 ms and miss maxima 31.023/25.276 ms. Complete-frame host
+aggregates use different boundaries and total 47.516/40.102 ms; these totals
+are not interchangeable. Shader compilation occurs once in each diagnostic,
+reaching 10.148/5.085 ms. Texture-decoding maxima are 2.242/1.605 ms,
+presentation waits 41.869/26.111 ms and GPU-fence waits 43.505/36.710 ms.
+Nested and cross-thread wall durations are not an additive GPU budget.
+
+The six reviewed grid/mid/end sets show no obvious road, building or HUD
+texture corruption. The player and three rivals progress along the road and
+minimap; throttle/steering respond and the native helper records release.
+Mid game clocks span 4.171--4.571 seconds and ends 21.904--25.538.
+Intro-camera/translucency and countdown differ, as do barrier contact and
+trajectories. Coverage is short starts/first-turn approach, not full laps,
+calibrated simulation speed, exact game-pixel equivalence or artifacts between
+stills. All six end thermal statuses are zero and captured emulator processes
+contain no fatal exception, assertion or device loss.
+
+The resumed unprofiled session restores its own current data and twenty-three
+properties at 17:28:50 Madrid, before its 17:30:29 deadline. The independent
+CPU session restores at 17:33:22, before 17:34:41. Verification checks each
+record's HDD/preferences/EEPROM hashes, APK identity, EEPROM ownership/mode,
+stopped emulator and untouched original Android user-10 installation. Seventy-three
+selected build inputs match committed sources and the delivered APK matches
+the installed/tested artifact. All builds and tests are local; Judge/CI/CD
+remain disabled and raw game/cache/profile/capture data stay private.
+
+Driver descriptor-binding copy stacks remain about 5.76%/6.06% of PFIFO sampled
+cycles. This motivates auditing redundant descriptor binds next. Dynamic
+uniform offsets, changed texture sets, pipeline layouts, command-buffer
+recording resets and queued/reordered draws must all remain correct; their
+necessary binds cannot simply be removed based on the sampled cost.
