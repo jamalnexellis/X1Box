@@ -1286,6 +1286,8 @@ typedef struct PGRAPHVkState {
 #endif
 
     StorageBuffer storage_buffers[BUFFER_COUNT];
+    StorageBuffer surface_copy_scratch;
+    bool surface_buffer_copy;
     PrimRewriteBuf prim_rewrite_buf;
 
     DrawQueue draw_queue;

@@ -410,6 +410,9 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
     __system_property_get("debug.xemu.vk.direct_upload", direct_upload);
     r->direct_draw_upload = strcmp(direct_upload, "1") == 0;
     r->per_slot_draw_buffers = r->direct_draw_upload || strcmp(direct_upload, "2") == 0;
+    char surface_copy[PROP_VALUE_MAX] = {0};
+    __system_property_get("debug.xemu.vk.surf_copy_buffer", surface_copy);
+    r->surface_buffer_copy = strcmp(surface_copy, "1") == 0;
     __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
                         "fenced draw upload mode=%d direct=%d",
                         r->direct_draw_upload ? 1 : r->per_slot_draw_buffers ? 2 : 0,
@@ -419,6 +422,8 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
     r->direct_draw_upload = direct_upload && strcmp(direct_upload, "1") == 0;
     r->per_slot_draw_buffers = r->direct_draw_upload ||
         (direct_upload && strcmp(direct_upload, "2") == 0);
+    const char *surface_copy = getenv("XEMU_VK_SURFACE_BUFFER_COPY");
+    r->surface_buffer_copy = surface_copy && strcmp(surface_copy, "1") == 0;
 #endif
 
     const size_t mib = 1024 * 1024;
@@ -606,6 +611,25 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
         }
     }
 
+    if (r->surface_buffer_copy) {
+        /* Dedicated device scratch avoids interference with compute results,
+         * deferred downloads and host staging. No per-copy allocation. */
+        r->surface_copy_scratch = (StorageBuffer){
+            .alloc_info = device_alloc_create_info,
+            .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            .buffer_size = compute_size,
+        };
+        Error *copy_error = NULL;
+        if (!create_buffer(pg, &r->surface_copy_scratch, "SURFACE_COPY_SCRATCH", &copy_error)) {
+            VK_LOG_ERROR("surface buffer copy unavailable: %s", error_get_pretty(copy_error));
+            error_free(copy_error);
+            destroy_buffer(pg, &r->surface_copy_scratch);
+            r->surface_buffer_copy = false;
+        }
+    }
+    VK_LOG("surface buffer copy=%d scratch=%zu", r->surface_buffer_copy,
+           r->surface_buffer_copy ? r->surface_copy_scratch.buffer_size : 0);
+
     // FIXME: Add fallback path for device using host mapped memory
 
     int buffers_to_map[] = { BUFFER_STAGING_DST };
@@ -767,6 +791,7 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
     return true;
 
 fail:
+    destroy_buffer(pg, &r->surface_copy_scratch);
     for (int i = 0; i < NUM_SUBMIT_FRAMES; i++) {
         FrameStagingState *fs = &r->frame_staging[i];
         StorageBuffer *bufs[] = {
@@ -803,6 +828,7 @@ void pgraph_vk_finalize_buffers(NV2AState *d)
 {
     PGRAPHState *pg = &d->pgraph;
     PGRAPHVkState *r = pg->vk_renderer_state;
+    destroy_buffer(pg, &r->surface_copy_scratch);
 
     for (int i = 0; i < NUM_SUBMIT_FRAMES; i++) {
         FrameStagingState *fs = &r->frame_staging[i];

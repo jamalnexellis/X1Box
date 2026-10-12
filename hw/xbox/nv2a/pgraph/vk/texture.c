@@ -33,6 +33,7 @@
 #include "cubemap-copy-vk.h"
 #include "surface-copy.h"
 #include "surface-copy-vk.h"
+#include "surface-buffer-copy-vk.h"
 #include "depth-copy.h"
 #include "depth-copy-vk.h"
 #include "surface-depth-view-vk.h"
@@ -1916,9 +1917,33 @@ static bool copy_surface_to_texture(PGRAPHState *pg, SurfaceBinding *surface,
         OPT_STAT_INC(nd_copysurf);
         VkCommandBuffer cmd = pgraph_vk_begin_nondraw_commands(pg);
         if (surface->color) {
-            vk_surface_copy_record(cmd, surface->image, surface->image_layout,
-                texture->image, texture->current_layout,
-                surface->image_width, surface->image_height);
+            VkDeviceSize copy_bytes = 0;
+            bool via_buffer = r->surface_buffer_copy &&
+                r->surface_copy_scratch.buffer &&
+                vk_surface_buffer_copy_size(surface->host_fmt.vk_format,
+                    texture->image_config.format, surface->image_width,
+                    surface->image_height, r->surface_copy_scratch.buffer_size,
+                    &copy_bytes);
+            if (via_buffer) {
+                vk_surface_buffer_copy_record(cmd, surface->image, surface->image_layout,
+                    texture->image, texture->current_layout, r->surface_copy_scratch.buffer,
+                    surface->image_width, surface->image_height, copy_bytes);
+#ifdef __ANDROID__
+                static bool buffer_engaged;
+                if (!buffer_engaged) {
+                    __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                        "surface buffer-copy path engaged: source_fmt=%d destination_fmt=%d "
+                        "width=%u height=%u bytes=%" PRIu64, surface->host_fmt.vk_format,
+                        texture->image_config.format, surface->image_width,
+                        surface->image_height, (uint64_t)copy_bytes);
+                    buffer_engaged = true;
+                }
+#endif
+            } else {
+                vk_surface_copy_record(cmd, surface->image, surface->image_layout,
+                    texture->image, texture->current_layout,
+                    surface->image_width, surface->image_height);
+            }
         } else if (stencil) {
             DepthStencilPackContext context = {pg, surface};
             vk_depth_stencil_copy_record(cmd, surface->image, surface->image_layout,

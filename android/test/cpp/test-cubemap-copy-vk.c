@@ -7,6 +7,7 @@
 #include <string.h>
 #include "hw/xbox/nv2a/pgraph/vk/cubemap-copy-vk.h"
 #include "hw/xbox/nv2a/pgraph/vk/surface-copy-vk.h"
+#include "hw/xbox/nv2a/pgraph/vk/surface-buffer-copy-vk.h"
 #include "hw/xbox/nv2a/pgraph/vk/depth-copy-vk.h"
 #include "hw/xbox/nv2a/pgraph/vk/depth-stencil-copy-vk.h"
 #include "hw/xbox/nv2a/pgraph/vk/depth-copy.h"
@@ -255,11 +256,15 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
            vk_surface_copy_formats_compatible(source_format, destination_format));
     const unsigned passes = 3;
     size_t bytes = (size_t)width * height * bytes_per_pixel;
+    VkDeviceSize buffer_bytes = 0;
+    bool buffer_copy = getenv("XEMU_TEST_SURFACE_BUFFER") &&
+        vk_surface_buffer_copy_size(source_format, destination_format,
+            width, height, bytes, &buffer_bytes);
     VkBuffer input, output;
     VkDeviceMemory input_memory = make_buffer(bytes * passes, &input);
     VkDeviceMemory output_memory = make_buffer(bytes * passes, &output);
     VkBuffer scratch = VK_NULL_HANDLE;
-    VkDeviceMemory scratch_memory = depth ? make_buffer(bytes, &scratch) : VK_NULL_HANDLE;
+    VkDeviceMemory scratch_memory = (depth || buffer_copy) ? make_buffer(bytes, &scratch) : VK_NULL_HANDLE;
     unsigned char *input_data, *output_data;
     CHECK(vkMapMemory(device, input_memory, 0, VK_WHOLE_SIZE, 0, (void **)&input_data));
     CHECK(vkMapMemory(device, output_memory, 0, VK_WHOLE_SIZE, 0, (void **)&output_data));
@@ -310,6 +315,10 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
             vk_depth_copy_record(cmd, source, layouts[pass], destination,
                 pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
                 scratch, width, height);
+        } else if (buffer_copy) {
+            vk_surface_buffer_copy_record(cmd, source, layouts[pass], destination,
+                pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                scratch, width, height, buffer_bytes);
         } else {
             vk_surface_copy_record(cmd, source, layouts[pass], destination,
                 pass ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
@@ -348,12 +357,13 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
     vkUnmapMemory(device, input_memory); vkUnmapMemory(device, output_memory);
     vkDestroyBuffer(device, input, NULL); vkDestroyBuffer(device, output, NULL);
     vkFreeMemory(device, input_memory, NULL); vkFreeMemory(device, output_memory, NULL);
-    if (depth) {
+    if (depth || buffer_copy) {
         vkDestroyBuffer(device, scratch, NULL); vkFreeMemory(device, scratch_memory, NULL);
     }
     printf("PASS %s color 2D source_fmt=%d destination_fmt=%d %ux%u, "
            "three queued versions and prior reads\n",
-           depth ? "D16/R16 scratch" : (source_format == destination_format ? "native" : "byte-preserving"),
+           depth ? "D16/R16 scratch" : buffer_copy ? "GPU buffer byte-preserving" :
+               (source_format == destination_format ? "native" : "byte-preserving"),
            source_format, destination_format, width, height);
 }
 
@@ -363,6 +373,22 @@ static void test_surface(VkQueue queue, VkCommandPool pool, uint32_t width,
 
 int main(int argc, char **argv)
 {
+    VkDeviceSize copy_bytes = 7;
+    assert(vk_surface_buffer_copy_size(VK_FORMAT_B8G8R8A8_UNORM,
+        VK_FORMAT_R8G8B8A8_UNORM, 1280, 480, 2457600, &copy_bytes));
+    assert(copy_bytes == 2457600);
+    assert(!vk_surface_buffer_copy_size(VK_FORMAT_B8G8R8A8_UNORM,
+        VK_FORMAT_R8G8B8A8_UNORM, 1280, 480, 2457599, &copy_bytes));
+    assert(!vk_surface_buffer_copy_size(VK_FORMAT_R8G8B8A8_UNORM,
+        VK_FORMAT_R8G8B8A8_UNORM, UINT32_MAX, UINT32_MAX, UINT64_MAX, &copy_bytes));
+    assert(!vk_surface_buffer_copy_size(VK_FORMAT_R8G8B8A8_UNORM,
+        VK_FORMAT_R8G8B8A8_UNORM, 0, 480, UINT64_MAX, &copy_bytes));
+    assert(!vk_surface_buffer_copy_size(VK_FORMAT_R8G8B8A8_UNORM,
+        VK_FORMAT_R8G8B8A8_UNORM, 1280, 0, UINT64_MAX, &copy_bytes));
+    assert(!vk_surface_buffer_copy_size(VK_FORMAT_B8G8R8A8_SRGB,
+        VK_FORMAT_R8G8B8A8_UNORM, 1280, 480, UINT64_MAX, &copy_bytes));
+    assert(!vk_surface_buffer_copy_size(VK_FORMAT_R8G8B8A8_UNORM,
+        VK_FORMAT_R5G6B5_UNORM_PACK16, 1280, 480, UINT64_MAX, &copy_bytes));
     bool validate = getenv("XEMU_TEST_VALIDATE") != NULL;
     VkValidationFeatureEnableEXT feature = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
     VkValidationFeaturesEXT validation = {

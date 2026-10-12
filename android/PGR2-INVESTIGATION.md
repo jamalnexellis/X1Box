@@ -3665,3 +3665,88 @@ is moving at only 2 km/h. No sustained original speed or clean full lap is
 verified. Current-process logs contain no emulator fatal exception, assertion
 or Vulkan device loss. Independent verification again confirms restoration
 of the lab data and all 29 properties, with the original profile untouched.
+
+## 2026-10-13: Barcelona slow-race reproduction on the user's Slot 1
+
+The user replaced Slot 1 with the slow Barcelona instant-action race and
+explicitly prohibited overwriting it. The earlier Slot 3 cone-challenge
+capture is excluded from this case: the user identified it as a different
+race/city. The new Slot 1 preview and loaded image both show the Barcelona
+introduction. The current user-selected disc and HDD are used directly, with
+no stationary benchmark seed, HDD replacement or snapshot-save operation.
+
+Perf47 is unchanged. Vulkan runs at the user's current 1x setting, with the
+previously enabled status-snapshot, uniform/descriptor/vertex-page, pipeline
+prewarm and queued surface/depth-copy experiments retained. Shared draw
+destinations remain selected. This is a diagnostic of the reported case,
+not a paired comparison of a new optimization or a FullHD result.
+
+The bounded capture contains 84,981 recorder events with zero drops, 366
+complete flip intervals, 267 intervals over 50 ms and 219 GPU clock
+calibrations. The scheduler covers the full 24.314-second native input
+interval, with contemporaneous task ownership and no positive trace
+error/data-loss counters. End-image review confirms a moving player at
+105 km/h, position 8/8, lap 1/3, visible advanced rivals and rain. The FPS
+overlay shows 11; complete final-ten-second intervals yield 12.773 FPS.
+These rates include diagnostic overhead and are not an unprofiled baseline.
+
+| Final ten-second diagnostic observation | Value |
+| --- | ---: |
+| Complete flip intervals | 127 |
+| Median flip interval | 73.115 ms |
+| Recorded texture-decode intervals | 80 |
+| Texture-decode interval union / maximum | 26.186 / 3.581 ms |
+| Recorded pipeline-create intervals | 8 |
+| Pipeline-create interval union / maximum | 4.680 / 0.791 ms |
+| Recorded shader-compile intervals | 0 |
+| Recorded texture-image creation intervals | 0 |
+| Aligned GPU interval union over this window | 4,578.732 ms |
+| Median aligned GPU interval union within a flip interval | 36.599 ms |
+
+GPU timestamp intervals include device dependencies, not just shader work;
+host intervals overlap and must not be added into a frame budget. The small
+recorded decode/compile totals in the final slow section do not explain the
+sustained frame times by themselves. Earlier in the capture, individual
+pipeline creation and texture-image creation reach 57.567 and 26.874 ms,
+respectively, so loading/transitions still have separate transient costs.
+
+Whole-input scheduling shows the vCPU running 80.05% of the interval and
+PFIFO running 49.56%; the render worker runs 2.48%. These are individual
+thread states, not total phone CPU usage or an additive cost decomposition.
+Application cycle sampling records 348,697 samples with two kernel-space
+samples lost and zero user-space loss. The actual APK native ELF and its
+unstripped build share a verified build ID. Native symbol attribution is
+restricted to that matching ELF; unknown execution addresses are not
+assigned to guest instructions or translation blocks without a JIT map.
+
+PFIFO call-chain attribution gives a specific generic target. In the final
+ten seconds, the nearest resolved native caller is
+`copy_surface_to_texture` for 22.00% of sampled PFIFO cycles. Its descendant
+`__ioctl` accounts for 21.25%, and recovered Vulkan calls identify
+`vkCmdCopyImage2` for 21.75% of PFIFO cycles, including the small cubemap
+contribution. These percentages overlap and are not FPS gains. Across all
+recovered PFIFO call chains, memory-allocation descendants of `__ioctl`
+account for 21.88% in that section. Another 8.00% is associated with
+`vkBeginCommandBuffer` through `pgraph_vk_begin_command_buffer`.
+
+Matching-ELF source lookup places the dominant color-copy call in the
+production `vk_surface_copy_record` helper used by the eligible queued
+surface-to-texture route. Startup logs show a 1280x480 BGRA8-to-RGBA8
+byte-reinterpretation copy at 1x. A replacement must preserve byte
+interpretation, alpha, formats, scaled extents and submission ordering;
+an ordinary format-converting blit is not a substitute for this path.
+Testing a reusable GPU-buffer transfer route against the current image-copy
+route, with exact generated-pixel checks, is now a concrete next experiment.
+It remains a hypothesis until the real Barcelona race is compared without
+diagnostic overhead. The vCPU also samples block lookup and floating-point
+helpers, so removing this graphics cost alone does not establish 30 FPS.
+
+Thermal status is 1 at both capture endpoints. This is a valid diagnostic
+of the observed slow session, but not a thermally matched performance claim.
+At 00:32:11 Madrid, the harness has reloaded the user's Slot 1, restored the
+two diagnostic properties to their original zero values and released the
+phone. Thumbnail/title hashes for all existing slots match before and after;
+no snapshot is saved or overwritten. Raw game images, traces, samples,
+addresses and harnesses remain private. No APK update, generic renderer
+change or speedup is delivered by this diagnostic. Judge and CI/CD remain
+disabled.
