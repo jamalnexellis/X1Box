@@ -62,6 +62,12 @@ unprofiled FPS result.
   a burst includes gaps between reads and is not a CPU execution-time measure.
 - Presentation submission and `vkQueuePresentKHR` result/host interval.
 
+From perf46, worker `submit` events encode `c` as flags: bit 0 is deferred
+completion and bit 1 means isolated auxiliary uploads wait on the previous
+submission chain at the main draw instead of the auxiliary buffer. Inline
+render-context submits retain their legacy zero `c` field. Queue timing alone
+cannot infer which dependency path was selected.
+
 Most detailed CPU phases below 50 us are filtered. Boundary, identity and
 dependency records are retained even when short. Repeated small costs can be
 investigated with the separate simpleperf/JIT diagnostic rather than treating
@@ -132,7 +138,14 @@ does not identify its producer or justify skipping that loop.
 
 Each phone session uses a fresh protected backup and a bounded deadline,
 checks APK identity and focus, stops on interruption, preserves exact helper
-errors, and restores its own data/preferences/EEPROM and all 27 diagnostic
+errors, and restores its own data/preferences/EEPROM and all 29 diagnostic
 properties. Pending cases remain pending if the restoration reserve is reached.
+Perf45--47 add opt-in `debug.xemu.vk.direct_upload` (0/1/2) and
+`debug.xemu.pgraph.status_read` (0/1). They select implementation experiments,
+separately from capture controls. Hold all other settings/cache seeds fixed;
+do not treat their default-off builds as evidence that an experiment is faster.
+Record thermal status at start/end, stop between cases when it changes, and
+exclude thermally mismatched cases from a paired FPS claim. A status change
+alone does not attribute a specific slow frame to throttling.
 No clocks, governors, root/kernel settings or security restrictions are changed.
 All builds and checks are local; CI/CD remains disabled.

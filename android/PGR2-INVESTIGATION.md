@@ -3544,3 +3544,124 @@ perf44 APK, restored hashes, EEPROM ownership/mode, stopped emulator and
 untouched original user-10 installation. All raw game/driver/JIT/scheduler
 data remain private. Judge and CI/CD remain disabled; no clocks, governors,
 kernel or security settings are changed.
+
+## 2026-10-12: fenced draw uploads and PGRAPH snapshots (perf45--47)
+
+Two generic experiments now target the captured dependency chains. Neither
+recognizes a game or skips guest instructions, draws or register write side
+effects. Both remain disabled by default.
+
+`debug.xemu.vk.direct_upload` selects shared GPU destinations (0), direct reads
+from each fenced slot's host upload buffers (1), or separate GPU destinations
+for each slot (2). Index/indirect, inline vertex and uniform bindings follow
+the slot; descriptor keys include its uniform buffer. Slots are recycled after
+their fences. Direct uploads flush host writes and publish them to index/
+indirect, vertex and both uniform shader stages. Mode 2 retains GPU copies.
+The existing vertex-RAM allocation is already per-slot.
+
+Main draws retain the previous submission chain. An auxiliary buffer may upload
+before the previous main submission completes only if it was newly opened for
+isolated slot uploads, with no existing auxiliary work or deferred downloads.
+Shared-image work retains the original ordering. Buffer-capacity and vertex-
+dirty finishes may defer in isolated modes, with resource/slot fences retained.
+
+The generated-data Vulkan fixture passes 196,608 exact RGBA comparisons on
+Adreno 830: 1/2/3 slots, staged/direct paths, indexed/indirect draws, dynamic
+uniform offsets in both shader stages, fence reuse and auxiliary/main semaphore
+routing through the production helper. Host llvmpipe passes with synchronization
+validation enabled and zero errors. The phone has no validation layer enabled.
+These are fixture checks, not whole-game graphics or FPS evidence.
+
+Perf45 does not establish a direct-host speedup. Its unprofiled 3x reference
+averages 26.193 FPS across four complete five-second windows. Two direct-host
+cases average 25.123 and 24.835 FPS, pooled to 24.979 FPS. A later reference
+averaging 22.175 FPS ends at thermal status 1 and is excluded from the matched
+thermal pool. Trajectory/contact differences limit inference. The direct-host
+route stays disabled; separate GPU destinations still need moving-race data.
+
+`debug.xemu.pgraph.status_read=1` reads single published status words without
+waiting on the renderer mutex. Live IRQ producers, acknowledgement and mask
+accesses use matching atomic operations; FIFO/INCREMENT publication uses the
+same acquire/release helper. Only side-effect-free 32-bit reads of INTR, INTR_EN,
+FIFO and INCREMENT bypass the lock. RDI_DATA still advances its indirect index
+under the original lock. INCREMENT writes still advance READ_3D and trigger the
+existing flip/kick behavior. Quiescent save/load keeps its serialized format.
+
+Offset 0x71c (1820) is INCREMENT; FIFO is 0x720. Perf46 initially covered IRQ/
+FIFO reads but left INCREMENT locked. Perf47 adds that missing read. The atomic
+fixture passes 65,536 IRQ-mask cases and 100,000 ordered publications preserving
+another concurrent IRQ, on host and arm64. Host ASan/UBSan checks pass.
+
+Two perf46 moving diagnostics have whole-input scheduler coverage, zero dropped
+recorder events and valid calibrated GPU alignment:
+
+| Observation | Original reads | IRQ/FIFO snapshots |
+| --- | ---: | ---: |
+| Recorder events | 121,429 | 123,544 |
+| Complete recorded flip intervals | 622 | 628 |
+| Recorded intervals over 50 ms | 48 | 39 |
+| Logged INTR mutex waits >=50 us | 49 | 0 |
+| Maximum INTR mutex wait | 31.507 ms | none |
+| Logged INCREMENT mutex waits >=50 us | 32 | 36 |
+| Maximum INCREMENT mutex wait | 27.729 ms | 24.672 ms |
+
+Eliminating the observed INTR read mutex waits is a confirmed mechanism change.
+The frame counts are descriptive diagnostics with observer cost, not an
+unprofiled FPS gain. Both end at thermal status 0. The unprofiled perf46 reference
+ends at thermal status 1 and is excluded from matched comparison. Pipeline
+creation and vertex/capacity waits remain present.
+
+Perf47 is locally compiled, signed and installed in the lab package as version
+code 76 / `1.2.9-pgr2-perf47`. APK and download copy match SHA-256
+`4fd5a89d263b7883fd2b1d1015f76148949a31eda8cd9217d10ebd761d098286`;
+97 selected inputs from the actual build snapshot match the source. An initial
+diagnostic loses foreground to ChatGPT and Android rejects the input helper;
+it lacks complete driving markers and is excluded, not an emulator crash.
+
+A later bounded perf47 session completes an unprofiled reference with both
+experiments off: four five-second windows average 27.244 FPS (26.563--28.366).
+Thermal status is 0 at start and case end, then changes before the next case
+after passive cooldown. The harness stops and restores at 22:42:24 Madrid,
+before its 22:45:52 deadline. This establishes no paired perf47 gain or sustained
+30 FPS. Internal 3x remains 1920x1440; Android output is 2340x1080.
+
+Reviewed end images show coherent road/buildings/HUD, released controls, player
+advancement and advanced rival markers. The latest reference ends at 62 km/h
+beside a barrier. This covers short starts, not full laps or full-game correctness.
+Independent restoration checks confirm HDD/preferences/EEPROM, all 29 diagnostic
+properties, stopped emulator and untouched original user-10 installation.
+Raw captures and game data remain private. Judge and CI/CD remain disabled.
+
+The separately authorized three-minute perf47 diagnostic completes and restores
+at 22:49:46 Madrid, before its 22:51:20 deadline. It records 121,998 events with
+zero drops, 628 complete flip intervals and 232 valid GPU clock calibrations.
+Native input lasts 24.170 seconds; scheduler coverage contains the whole input
+with verified task ownership and no positive trace error/data-loss counters.
+With status snapshots enabled and shared draw destinations retained, both INTR
+and INCREMENT have zero logged read mutex waits. The remaining PGRAPH read wait
+is 66 us at another register. The recorder still observes INTR and INCREMENT
+reads, so their disappearance from the lock list is not missing MMIO telemetry.
+Perf46's original-read diagnostic had 81 target waits, totaling 482.131 ms
+across its input interval. Those logged totals are not a frame budget or an
+achievable FPS gain; the two captures differ in trajectory and thermal state.
+
+This confirms the perf47 mechanism for both target reads, while the remaining
+37 intervals over 50 ms show unresolved stalls. Median/p95/maximum recorded
+intervals are 35.996/53.068/106.647 ms. Pipeline creation still reaches 23.139 ms;
+110 vertex-dirty completion waits reach 37.665 ms and 11 capacity waits reach
+18.438 ms. In the largest completion wait, submit takes 0.043 ms, the first GPU
+timestamp follows submit return by 27.609 ms, and earlier GPU intervals overlap
+27.590 ms of that gap. Its own GPU interval union is 9.710 ms. These continue
+to support queued dependencies, not a claim of pure GPU occupancy. Maximum
+recorded texture decode is 1.275 ms. The vCPU runs for 90.61% of the input
+interval and PFIFO for 63.51%; these percentages concern individual threads.
+
+The diagnostic ends at thermal status 1. Its four five-second flip windows
+average 25.689 FPS, explicitly excluded from a paired, unprofiled performance
+claim. The earlier 27.244 FPS reference has snapshots off and cannot be called
+a perf47 optimization gain. The latest end image has coherent road/buildings/
+HUD and advanced rival markers, but the player has contacted the barrier and
+is moving at only 2 km/h. No sustained original speed or clean full lap is
+verified. Current-process logs contain no emulator fatal exception, assertion
+or Vulkan device loss. Independent verification again confirms restoration
+of the lab data and all 29 properties, with the original profile untouched.
