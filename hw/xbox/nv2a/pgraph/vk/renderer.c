@@ -283,6 +283,8 @@ static void pgraph_vk_init(NV2AState *d, Error **errp)
     VK_LOG_ERROR("init: gpu_properties");
     pgraph_vk_determine_gpu_properties(d);
 
+    pgraph_vk_prewarm_pipeline_recipes(pg);
+
     VK_LOG_ERROR("init: renderer_ready");
 
 }

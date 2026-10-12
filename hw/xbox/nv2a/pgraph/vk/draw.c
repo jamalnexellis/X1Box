@@ -780,6 +780,7 @@ void pgraph_vk_finalize_pipelines(PGRAPHState *pg)
 
     finalize_clear_shaders(pg);
     finalize_pipeline_cache(pg);
+    pgraph_vk_finalize_pipeline_recipes(r);
     finalize_render_passes(r);
 
     pgraph_vk_render_thread_wait_idle(r);
@@ -819,7 +820,8 @@ static void init_render_pass_state(PGRAPHState *pg, RenderPassState *state)
                                            VK_FORMAT_UNDEFINED;
 }
 
-static VkRenderPass create_render_pass(PGRAPHVkState *r, RenderPassState *state)
+static VkRenderPass create_render_pass(PGRAPHVkState *r, RenderPassState *state,
+                                       bool recoverable)
 {
     NV2A_VK_DPRINTF("Creating render pass");
 
@@ -912,8 +914,10 @@ static VkRenderPass create_render_pass(PGRAPHVkState *r, RenderPassState *state)
         .pDependencies = &dependency,
     };
     VkRenderPass render_pass;
-    VK_CHECK(vkCreateRenderPass(r->device, &renderpass_create_info, NULL,
-                                &render_pass));
+    VkResult result = vkCreateRenderPass(r->device, &renderpass_create_info,
+                                         NULL, &render_pass);
+    if (recoverable && result != VK_SUCCESS) return VK_NULL_HANDLE;
+    VK_CHECK(result);
     return render_pass;
 }
 
@@ -921,7 +925,7 @@ static VkRenderPass add_new_render_pass(PGRAPHVkState *r, RenderPassState *state
 {
     RenderPass new_pass;
     memcpy(&new_pass.state, state, sizeof(*state));
-    new_pass.render_pass = create_render_pass(r, state);
+    new_pass.render_pass = create_render_pass(r, state, false);
     g_array_append_vals(r->render_passes, &new_pass, 1);
     return new_pass.render_pass;
 }
@@ -935,6 +939,25 @@ static VkRenderPass get_render_pass(PGRAPHVkState *r, RenderPassState *state)
         }
     }
     return add_new_render_pass(r, state);
+}
+
+VkRenderPass pgraph_vk_recipe_render_pass(PGRAPHVkState *r,
+                                         VkFormat color, VkFormat depth)
+{
+    RenderPassState state = {.color_format = color, .zeta_format = depth,
+        .color_load_op = VK_ATTACHMENT_LOAD_OP_LOAD,
+        .zeta_load_op = VK_ATTACHMENT_LOAD_OP_LOAD,
+        .stencil_load_op = VK_ATTACHMENT_LOAD_OP_LOAD};
+    for (unsigned i = 0; i < r->render_passes->len; i++) {
+        RenderPass *pass = &g_array_index(r->render_passes, RenderPass, i);
+        if (!memcmp(&pass->state, &state, sizeof(state))) return pass->render_pass;
+    }
+    VkRenderPass handle = create_render_pass(r, &state, true);
+    if (handle) {
+        RenderPass pass = {.state = state, .render_pass = handle};
+        g_array_append_val(r->render_passes, pass);
+    }
+    return handle;
 }
 
 static void create_frame_buffer(PGRAPHState *pg)
@@ -2007,6 +2030,8 @@ static void create_pipeline(PGRAPHState *pg)
     nv2a_stall_record(NV2A_STALL_PIPELINE_CREATE, pipeline_start, 0);
     pgraph_vk_log_pipeline_creation(r, pipeline_create_info.flags,
                                     module_hashes, &feedback);
+    pgraph_vk_capture_pipeline_recipe(r, &pipeline_create_info,
+        &pipeline_layout_info, &key.render_pass_state, r->shader_binding);
 #ifdef __ANDROID__
     if (nv2a_stall_profile_enabled) {
         __android_log_print(ANDROID_LOG_INFO, "xemu-pipeline-input",

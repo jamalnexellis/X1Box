@@ -377,3 +377,52 @@ feedback structure or hash modules. Duration/cache-hit fields are read only
 when feedback has its VALID bit, following [Khronos feedback requirements](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineCreationFeedback.html).
 Module-hash groups help investigate repeated code; they do not prove complete
 pipeline equality or justify relaxing the production state comparison.
+
+# Complete pipeline recipes
+
+`debug.xemu.vk.pipeline_prewarm` (Android) or `XEMU_VK_PIPELINE_PREWARM`
+(desktop) selects `0` disabled/default, `1` replay and record, or `2` record
+only. Shader caching must be enabled and async compilation disabled. Replay
+runs after renderer initialization, before guest rendering starts. It creates
+ordinary pipelines in the driver's existing cache, then destroys the replay
+pipelines, layouts and shader modules. Guest draws still use their ordinary
+pipeline lookup, complete shader-state collision checks and current state.
+This uses the driver's [pipeline-cache semantics](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineCache.html).
+
+Successful synchronous draw-pipeline creation can save a pointer-free recipe
+in private `vk_pipeline_recipes.bin` and SHA-256-addressed SPIR-V copies in
+`pipeline_spv`. Recipes retain stages, vertex descriptions, fixed/dynamic
+state, attachment formats and push-constant ranges; Vulkan handles are never
+persisted. Replay uses the current descriptor layouts. The header must match
+ABI, record size, driver identity, enabled physical features and relevant
+renderer capability/policy bits. Bump the recipe ABI when the descriptor
+interface or recipe interpretation changes. Recipe deduplication checks both
+SHA-256 and complete bytes. Missing, corrupt or incompatible records fall
+back to ordinary pipeline creation; only complete checked records survive a
+torn append. Reads are bounded to 1,024 records and 4 MiB per shader. The
+SPIR-V check validates instruction bounds and the stage's `main` entry point;
+it is not a complete semantic validator. Successful original pipeline
+creation and SHA-256 verification establish the provenance of replay code.
+
+`test-pipeline-recipe` runs 1,088 owned-state capture/rebuild round trips,
+including overwritten caller arrays, geometry, depth/color attachments,
+push ranges and compilation flags. It also checks unaligned records,
+overflowing indices, every-byte corruption/truncation and SPIR-V bounds/stage
+rejection. Run the production header on a host with GLib/Vulkan headers:
+
+```sh
+cc -std=c11 -O2 -UNDEBUG -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -I. $(pkg-config --cflags glib-2.0) \
+  android/test/cpp/test-pipeline-recipe.c $(pkg-config --libs glib-2.0) \
+  -o "$task_dir/pipeline-recipe-check"
+"$task_dir/pipeline-recipe-check"
+```
+
+The generated-pixel Vulkan fixture above also captures and rebuilds its
+pipeline descriptions after overwriting caller state. Run both compilation
+flags. CPU round trips and generated pixels establish limited correctness,
+not a game FPS gain. Measure replay startup separately from moving gameplay.
+Seed every comparison with the same opaque Vulkan cache, shader/recipe files
+and actual driver identity; exclude the record-only training pass from FPS
+comparisons. Confirm `xemu-pipeline-recipe` loaded/warmed/failure counts and
+inspect fresh driver cache-hit feedback with profiling in separate runs.

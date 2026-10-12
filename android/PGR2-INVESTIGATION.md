@@ -2804,3 +2804,115 @@ installed with both new experiments default OFF. Sixty-three selected build
 inputs match committed sources and the delivered APK matches the installed
 artifact. Judge/CI/CD remain disabled; all builds/tests are local and raw
 game data/caches/captures/profiles remain private.
+
+### Perf40 complete pipeline recording and startup replay
+
+The generic opt-in route records pointer-free descriptions of successful
+synchronous draw pipelines and complete SHA-256-addressed SPIR-V copies.
+On a compatible later startup it reconstructs those pipelines into the
+existing opaque Vulkan cache, then destroys the replay objects. Ordinary
+guest pipeline lookup and the complete shader-state collision check remain
+unchanged. Replay never assigns a pipeline to guest state. Current descriptor
+layouts and compatible format-based render passes are used. Vulkan supports
+cache reuse between pipeline creations and runs; see [Khronos pipeline cache](https://docs.vulkan.org/refpages/latest/refpages/source/VkPipelineCache.html).
+
+Android `debug.xemu.vk.pipeline_prewarm` / desktop
+`XEMU_VK_PIPELINE_PREWARM` selects 0 disabled/default, 1 replay plus record,
+or 2 record only. Shader caching must be enabled and async compilation
+disabled. The header checks recipe ABI/size, actual driver identity,
+enabled physical features and renderer capability/policy bits. Complete
+record and shader digests are checked, reads are bounded and interrupted
+appends retain only complete checked records. Missing/incompatible data
+falls back to ordinary creation. No title-specific behavior, guest
+instruction removal or shader simplification is introduced.
+
+The host ASan/UBSan fixture and native arm64 fixture each pass 1,088
+capture/rebuild round trips, 2,160 corrupt/truncated byte cases, unaligned
+records, overflow indices and SPIR-V instruction/stage bounds checks.
+The generated-pixel fixture now creates pipelines from production-owned
+recipe reconstruction after overwriting caller arrays and state. Both
+normal and unoptimized compilation pass 270,336 exact RGBA comparisons.
+These tests cover generated inputs and cache handling, not every guest
+format or a complete game's correctness.
+
+Perf40 builds locally as version 69 / `1.2.9-pgr2-perf40`, in the separate
+`.dev.local` package with the existing signing certificate. APK signature,
+package/version and actual arm64 feature strings pass. The installed,
+delivered and tested APK SHA-256 is
+`3b4ababb6921e6812e20799c1497b2cfcb7e64b2dfee193f39374f869dd80026`.
+
+### Perf40 matched-cache moving results
+
+A record-only moving pass produces 144 complete recipes: 137,788 archive
+bytes and 154 shader files totaling 2,517,520 bytes. All record digests and
+shader filename/content digests match. This training pass is excluded from
+FPS comparisons. Every subsequent case restores the same initial opaque
+Vulkan cache, warm shader seed, current driver identity and recipe/shader
+seed. All seven starts report 185/193 prewarmed shader modules and no cache
+invalidation. The three replay starts load and warm all 144 recipes with
+zero failures, taking 415.823, 418.321 and 412.876 ms respectively.
+
+Four unprofiled off/on/on/off starts use identical 3x settings and the
+twenty-four-second native input plan. Each has four complete flip windows
+within native touch markers:
+
+| Recipe replay | Case | Descriptive FPS |
+| --- | --- | ---: |
+| Off | A | 27.781 |
+| On | A | 26.685 |
+| On | B | 27.520 |
+| Off | B | 25.900 |
+
+Off pools to 26.839 FPS and on to 27.103 FPS, a descriptive 0.98% increase.
+Between-case/countdown/trajectory/contact variation exceeds that difference;
+no causal FPS improvement is accepted. Off windows range 24.886--28.332,
+on windows 24.075--28.326, with all sixteen below 29.7 FPS. Replay stays
+OFF by default. Original sustained 30 FPS remains unverified. Scanout is
+1920x1440 at 3x, with native presentation 2340x1080.
+
+The separate matched-cache profiled starts demonstrate a substantial
+reduction in backend compilation work in the observed scene. Ordinary
+draw-pipeline creation feedback is valid for all 30 off / 28 on calls ending
+inside input bounds. Cache hits rise from 18/30 to 27/28. Twelve off misses
+take 21.577--37.830 ms; the single on miss takes 29.443 ms. Cache hits take
+0.619--1.743 / 0.703--1.707 ms. Total driver-reported creation time falls
+from 350.856 to 57.799 ms, an 83.5% descriptive reduction. The one remaining
+miss shows that a previously unseen pipeline still requires compilation.
+Replay cannot eliminate the cost of genuinely new rendering state.
+
+Each diagnostic has 619 complete moving frame intervals. Off/on medians
+are 36.643/36.340 ms, p95 58.130/56.045 ms, p99 73.802/84.562 ms and
+maxima 93.031/110.240 ms. Intervals above 50 ms number 61/50. The worst
+tail is worse with replay; no overall frame-stability improvement is
+accepted. Lower compilation cost alone does not remove the sustained
+CPU/rendering/synchronization deficit.
+
+Complete-frame host phase aggregates report 30/28 pipeline creations,
+341.668/45.144 ms total and 37.843/29.463 ms maxima. These selections
+include clear/draw calls and use different boundaries from driver feedback;
+their totals must not be treated as interchangeable. Shader compilation
+occurs once in each moving diagnostic, reaching 5.548/5.812 ms. Texture
+decoding maxima are 0.911/1.221 ms. Presentation waits reach 23.987/38.079 ms
+and GPU fences 24.631/41.436 ms. Nested/cross-thread host wall durations are
+not an additive GPU budget, but show that important stalls remain after
+preparing the known pipelines.
+
+All seven reviewed grid/mid/end sets show coherent road, buildings, player
+car and HUD, with three moving rivals in each mid capture and minimap
+progress. Throttle/steering respond and release. Countdown differs (2, 3,
+or no visible number); mid HUD clocks span 3.904--4.370 seconds, end clocks
+22.904--24.938. Barrier contact and trajectories differ. Coverage is short
+starts/first-turn approach, not complete laps, calibrated simulation speed
+or artifacts between still captures. All end thermal statuses are zero;
+captured emulator processes contain no fatal exception, assertion or
+device loss.
+
+The protected record restores its own HDD/preferences/EEPROM hashes and
+all twenty-two diagnostic properties at 03:46:32 Madrid, before the
+03:49:25 deadline. Final verification confirms the installed APK, stopped
+emulator, EEPROM ownership/mode and untouched original Android profile.
+Sixty-nine selected build inputs match committed sources and the delivered
+APK matches the installed/tested artifact. Judge and CI/CD remain disabled;
+all builds/tests are local and raw game data/caches/captures/profiles stay
+private. This route prepares known pipeline work; sustained throughput
+and long-tail synchronization remain open performance problems.

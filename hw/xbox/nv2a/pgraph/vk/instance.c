@@ -571,6 +571,17 @@ static void add_optional_device_extension_names(
          add_extension_if_available(available_extensions, enabled_extension_names,
                                    VK_EXT_PIPELINE_CREATION_FEEDBACK_EXTENSION_NAME));
 
+    /* 0: off, 1: warm and record, 2: record only for a controlled comparison. */
+#ifdef __ANDROID__
+    char recipe_property[PROP_VALUE_MAX] = {0};
+    __system_property_get("debug.xemu.vk.pipeline_prewarm", recipe_property);
+    const char *recipe_mode = recipe_property;
+#else
+    const char *recipe_mode = getenv("XEMU_VK_PIPELINE_PREWARM");
+#endif
+    r->pipeline_recipe_mode = recipe_mode && !strcmp(recipe_mode, "1") ? 1 :
+                              recipe_mode && !strcmp(recipe_mode, "2") ? 2 : 0;
+
     if (r->device_props.apiVersion < VK_API_VERSION_1_3) {
         r->extended_dynamic_state_supported = add_extension_if_available(
             available_extensions, enabled_extension_names,

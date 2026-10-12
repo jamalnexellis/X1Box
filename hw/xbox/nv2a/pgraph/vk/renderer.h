@@ -26,6 +26,7 @@
 #include "vertex-propagation.h"
 #include "vertex-input.h"
 #include "pipeline-compile.h"
+#include "pipeline-recipe.h"
 #include "cubemap-copy.h"
 #include "qemu/queue.h"
 #include "qemu/lru.h"
@@ -1193,6 +1194,8 @@ typedef struct PGRAPHVkState {
     VkPipelineCache vk_pipeline_cache;
     PipelineBinding *pipeline_cache_entries;
     PipelineBinding *pipeline_binding;
+    struct NV2AVkPipelineRecipeCache *pipeline_recipe_cache;
+    unsigned pipeline_recipe_mode;
     bool pipeline_binding_changed;
     bool pipeline_state_dirty;
     bool pre_draw_skipped;
@@ -1770,6 +1773,14 @@ void pgraph_vk_process_pending_reports_internal(NV2AState *d);
 
 // draw.c
 void pgraph_vk_init_pipelines(PGRAPHState *pg);
+void pgraph_vk_prewarm_pipeline_recipes(PGRAPHState *pg);
+void pgraph_vk_finalize_pipeline_recipes(PGRAPHVkState *r);
+void pgraph_vk_capture_pipeline_recipe(PGRAPHVkState *r,
+    const VkGraphicsPipelineCreateInfo *info,
+    const VkPipelineLayoutCreateInfo *layout, const RenderPassState *pass,
+    const ShaderBinding *shader);
+VkRenderPass pgraph_vk_recipe_render_pass(PGRAPHVkState *r,
+                                         VkFormat color, VkFormat depth);
 void pgraph_vk_log_pipeline_creation(PGRAPHVkState *r,
                                     VkPipelineCreateFlags flags,
                                     const uint64_t module_hashes[3],

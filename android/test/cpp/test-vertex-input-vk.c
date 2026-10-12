@@ -9,6 +9,7 @@
 #include <vulkan/vulkan.h>
 #include "hw/xbox/nv2a/pgraph/vk/vertex-input.h"
 #include "hw/xbox/nv2a/pgraph/vk/pipeline-compile.h"
+#include "hw/xbox/nv2a/pgraph/vk/pipeline-recipe.h"
 
 #define CHECK(x) do { VkResult r_=(x); if(r_!=VK_SUCCESS) { fprintf(stderr,"%s: %d\n",#x,r_); abort(); } } while(0)
 #define N 16
@@ -77,7 +78,18 @@ static VkPipeline pipeline(unsigned i,int dynamic,VkPipelineCache cache,uint64_t
     VkPipelineCreationFeedback feedback={0};
     VkPipelineCreationFeedbackCreateInfo feedback_info={.sType=VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO,.pPipelineCreationFeedback=&feedback};
     VkGraphicsPipelineCreateInfo info={.sType=VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,.pNext=&feedback_info,.flags=nv2a_vk_draw_pipeline_flags(unoptimized),.stageCount=2,.pStages=stages,.pVertexInputState=dynamic?NULL:&input,.pInputAssemblyState=&assembly,.pViewportState=&vp,.pRasterizationState=&raster,.pMultisampleState=&ms,.pColorBlendState=&blend,.pDynamicState=dynamic?&dyn:NULL,.layout=layout,.renderPass=pass};
-    VkPipeline out; uint64_t before=ns(); CHECK(vkCreateGraphicsPipelines(device,cache,1,&info,NULL,&out)); *create_ns+=ns()-before;
+    VkPipelineLayoutCreateInfo layout_description={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    NV2AVkPipelineRecipe recipe;
+    assert(nv2a_vk_recipe_capture(&recipe,&info,&layout_description,VK_FORMAT_R8G8B8A8_UNORM,VK_FORMAT_UNDEFINED));
+    VkPhysicalDeviceProperties properties;vkGetPhysicalDeviceProperties(physical,&properties);
+    assert(nv2a_vk_recipe_valid(&recipe,&properties.limits));
+    VkShaderModule saved_modules[3]={stages[0].module,stages[1].module,VK_NULL_HANDLE};
+    memset(&binding,0xcc,sizeof(binding));memset(attr,0xdd,sizeof(attr));memset(stages,0xee,sizeof(stages));
+    memset(&viewport,0xaa,sizeof(viewport));memset(&scissor,0xbb,sizeof(scissor));memset(&raster,0xff,sizeof(raster));
+    NV2AVkPipelineReplayInfo replay;
+    nv2a_vk_recipe_rebuild(&recipe,saved_modules,layout,pass,&replay);
+    replay.pipeline.pNext=&feedback_info;
+    VkPipeline out; uint64_t before=ns(); CHECK(vkCreateGraphicsPipelines(device,cache,1,&replay.pipeline,NULL,&out)); *create_ns+=ns()-before;
     if(feedback.flags&VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) (*hits)++;
     return out;
 }

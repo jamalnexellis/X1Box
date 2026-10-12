@@ -1385,6 +1385,14 @@ add_dependencies(test-pipeline-key glib_ep)
 endif()
 
 if(XEMU_ENABLE_VULKAN)
+  add_executable(test-pipeline-recipe EXCLUDE_FROM_ALL
+    "${REPO_ROOT}/android/test/cpp/test-pipeline-recipe.c"
+    "${CMAKE_CURRENT_LIST_DIR}/libintl_stub.c")
+  target_include_directories(test-pipeline-recipe PRIVATE "${REPO_ROOT}"
+    "${GLIB_INSTALL_DIR}/include/glib-2.0" "${GLIB_INSTALL_DIR}/lib/glib-2.0/include")
+  target_link_libraries(test-pipeline-recipe PRIVATE glib-2.0)
+  target_compile_options(test-pipeline-recipe PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+  add_dependencies(test-pipeline-recipe glib_ep)
   add_executable(test-vertex-input EXCLUDE_FROM_ALL
     "${REPO_ROOT}/android/test/cpp/test-vertex-input.c")
   target_include_directories(test-vertex-input PRIVATE "${REPO_ROOT}")
