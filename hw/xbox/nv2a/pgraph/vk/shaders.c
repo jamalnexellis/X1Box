@@ -604,7 +604,7 @@ static void make_desc_set_cache_key(PGRAPHVkState *r,
                                     struct DescSetCacheKey *key)
 {
     memset(key, 0, sizeof(*key));
-    key->ubo_buffer = r->storage_buffers[BUFFER_UNIFORM].buffer;
+    key->ubo_buffer = get_staging_buffer(r, BUFFER_UNIFORM)->buffer;
     for (int i = 0; i < 2; i++) {
         key->ubo_range[i] = layouts[i]->total_size;
     }
@@ -791,6 +791,7 @@ void pgraph_vk_update_descriptor_sets(PGRAPHState *pg)
     }
 
     if (need_new_descriptor_set &&
+        !(r->direct_draw_upload && r->need_descriptor_rebind) &&
         !r->shader_bindings_changed && !r->texture_bindings_changed &&
         *ds_index_ptr > 0) {
         OPT_STAT_INC(desc_rebind_skips);
@@ -834,7 +835,7 @@ void pgraph_vk_update_descriptor_sets(PGRAPHState *pg)
         VkDescriptorBufferInfo ubo_buffer_infos[2];
         for (int i = 0; i < 2; i++) {
             ubo_buffer_infos[i] = (VkDescriptorBufferInfo){
-                .buffer = r->storage_buffers[BUFFER_UNIFORM].buffer,
+                .buffer = get_staging_buffer(r, BUFFER_UNIFORM)->buffer,
                 .offset = 0,
                 .range = layouts[i]->total_size,
             };
@@ -856,7 +857,7 @@ void pgraph_vk_update_descriptor_sets(PGRAPHState *pg)
         VkDescriptorBufferInfo ubo_buffer_infos[2];
         for (int i = 0; i < 2; i++) {
             ubo_buffer_infos[i] = (VkDescriptorBufferInfo){
-                .buffer = r->storage_buffers[BUFFER_UNIFORM].buffer,
+                .buffer = get_staging_buffer(r, BUFFER_UNIFORM)->buffer,
                 .offset = 0,
                 .range = layouts[i]->total_size,
             };
@@ -877,7 +878,7 @@ void pgraph_vk_update_descriptor_sets(PGRAPHState *pg)
         VkDescriptorBufferInfo ubo_buffer_infos[2];
         for (int i = 0; i < ARRAY_SIZE(layouts); i++) {
             ubo_buffer_infos[i] = (VkDescriptorBufferInfo){
-                .buffer = r->storage_buffers[BUFFER_UNIFORM].buffer,
+                .buffer = get_staging_buffer(r, BUFFER_UNIFORM)->buffer,
                 .offset = 0,
                 .range = layouts[i]->total_size,
             };

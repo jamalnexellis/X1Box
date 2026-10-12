@@ -18,6 +18,7 @@
  */
 
 #include "renderer.h"
+#include "draw-upload.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -402,6 +403,18 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
 {
     PGRAPHState *pg = &d->pgraph;
     PGRAPHVkState *r = pg->vk_renderer_state;
+    /* Opt in until moving-race performance and compatibility are established.
+     * Slots retain their existing fence retirement and upload capacities. */
+#ifdef __ANDROID__
+    char direct_upload[PROP_VALUE_MAX] = {0};
+    __system_property_get("debug.xemu.vk.direct_upload", direct_upload);
+    r->direct_draw_upload = strcmp(direct_upload, "1") == 0;
+    __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+                        "direct fenced draw upload=%d", r->direct_draw_upload);
+#else
+    const char *direct_upload = getenv("XEMU_VK_DIRECT_UPLOAD");
+    r->direct_draw_upload = direct_upload && strcmp(direct_upload, "1") == 0;
+#endif
 
     const size_t mib = 1024 * 1024;
     size_t vram_size = memory_region_size(d->vram);
@@ -573,7 +586,9 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
     };
 
     for (int i = 0; i < BUFFER_COUNT; i++) {
-        if (is_per_frame_staging_buffer(i)) {
+        if (is_per_frame_staging_buffer(i) ||
+            (r->direct_draw_upload &&
+             (i == BUFFER_INDEX || i == BUFFER_VERTEX_INLINE || i == BUFFER_UNIFORM))) {
             VK_LOG("buffer_init: skip superseded global %s size=%zu",
                    buffer_names[i], r->storage_buffers[i].buffer_size);
             continue;
@@ -661,6 +676,11 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
             .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             .buffer_size = uni_cap,
         };
+        if (r->direct_draw_upload) {
+            fs->index_staging.usage |= nv2a_vk_draw_upload_usage(NV2A_VK_UPLOAD_INDEX);
+            fs->vertex_inline_staging.usage |= nv2a_vk_draw_upload_usage(NV2A_VK_UPLOAD_VERTEX);
+            fs->uniform_staging.usage |= nv2a_vk_draw_upload_usage(NV2A_VK_UPLOAD_UNIFORM);
+        }
         fs->staging_src = (StorageBuffer){
             .alloc_info = host_alloc_create_info,
             .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT |

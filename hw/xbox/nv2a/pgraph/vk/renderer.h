@@ -1289,6 +1289,7 @@ typedef struct PGRAPHVkState {
     ReorderWindow reorder_window;
 
     FrameStagingState frame_staging[NUM_SUBMIT_FRAMES];
+    bool direct_draw_upload;
     struct {
         int64_t started_us;
         uint64_t rotations, copied_bytes, bounding_bytes, runs, copy_us;
@@ -1543,6 +1544,18 @@ static inline VkResult pgraph_vk_wait_for_fences(PGRAPHVkState *r, uint32_t coun
 
 static inline StorageBuffer *get_staging_buffer(PGRAPHVkState *r, int buffer_id)
 {
+    if (r->direct_draw_upload) {
+        switch (buffer_id) {
+        case BUFFER_INDEX:
+            return &r->frame_staging[r->current_frame].index_staging;
+        case BUFFER_VERTEX_INLINE:
+            return &r->frame_staging[r->current_frame].vertex_inline_staging;
+        case BUFFER_UNIFORM:
+            return &r->frame_staging[r->current_frame].uniform_staging;
+        default:
+            break;
+        }
+    }
     switch (buffer_id) {
     case BUFFER_INDEX_STAGING:
         return &r->frame_staging[r->current_frame].index_staging;

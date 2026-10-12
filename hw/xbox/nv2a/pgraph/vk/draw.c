@@ -21,6 +21,7 @@
 #include "qemu/fast-hash.h"
 #include "qemu/error-report.h"
 #include "renderer.h"
+#include "draw-upload.h"
 #include "hw/xbox/nv2a/pgraph/lag-trace-buffer.h"
 #include "pipeline-key-compare.h"
 #include "system/physmem.h"
@@ -2253,7 +2254,7 @@ static void sync_staging_buffer(PGRAPHState *pg, VkCommandBuffer cmd,
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
     StorageBuffer *b_src = get_staging_buffer(r, index_src);
-    StorageBuffer *b_dst = &r->storage_buffers[index_dst];
+    StorageBuffer *b_dst = get_staging_buffer(r, index_dst);
 
     if (!b_src->buffer_offset) {
         return;
@@ -2268,6 +2269,17 @@ static void sync_staging_buffer(PGRAPHState *pg, VkCommandBuffer cmd,
      */
     VK_CHECK(vmaFlushAllocation(r->allocator, b_src->allocation, 0,
                                 b_src->buffer_offset));
+
+    if (r->direct_draw_upload) {
+        assert(b_src == b_dst);
+        NV2AVkDrawUpload type = index_dst == BUFFER_INDEX ? NV2A_VK_UPLOAD_INDEX :
+            index_dst == BUFFER_VERTEX_INLINE ? NV2A_VK_UPLOAD_VERTEX : NV2A_VK_UPLOAD_UNIFORM;
+        nv2a_vk_draw_upload_barrier(cmd, b_src->buffer, b_src->buffer_offset, type);
+        /* CPU append-only slices stay immutable until this slot's existing
+         * fence retires. The next upload belongs to the rotated slot. */
+        b_src->buffer_offset = 0;
+        return;
+    }
 
     VkBufferMemoryBarrier host_barrier = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -2779,18 +2791,20 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
          * destination buffers (UNIFORM, INDEX, VERTEX_INLINE, VERTEX_RAM).
          * The staging sync below overwrites these from offset 0. Ensure all
          * previous reads complete before we write. */
-        VkMemoryBarrier war_barrier = {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-            .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT |
-                             VK_ACCESS_MEMORY_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT |
-                             VK_ACCESS_MEMORY_WRITE_BIT,
-        };
-        vkCmdPipelineBarrier(
-            cmd,
-            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-            0, 1, &war_barrier, 0, NULL, 0, NULL);
+        if (!r->direct_draw_upload) {
+            VkMemoryBarrier war_barrier = {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT |
+                                 VK_ACCESS_MEMORY_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT |
+                                 VK_ACCESS_MEMORY_WRITE_BIT,
+            };
+            vkCmdPipelineBarrier(
+                cmd,
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                0, 1, &war_barrier, 0, NULL, 0, NULL);
+        }
 
         sync_staging_buffer(pg, cmd, BUFFER_INDEX_STAGING, BUFFER_INDEX);
         sync_staging_buffer(pg, cmd, BUFFER_VERTEX_INLINE_STAGING,
@@ -2857,7 +2871,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
         bool deferred = (finish_reason == VK_FINISH_REASON_FLIP_STALL ||
                          finish_reason == VK_FINISH_REASON_PRESENTING ||
                          finish_reason == VK_FINISH_REASON_STALLED);
-        if (g_xemu_fast_fences) {
+        if (g_xemu_fast_fences || r->direct_draw_upload) {
             deferred = deferred ||
                 finish_reason == VK_FINISH_REASON_NEED_BUFFER_SPACE ||
                 finish_reason == VK_FINISH_REASON_VERTEX_BUFFER_DIRTY;
@@ -4745,7 +4759,7 @@ static void flush_draw_queue_internal(NV2AState *d)
         VkDeviceSize buffer_offset = pgraph_vk_update_index_buffer(
             pg, q->index_buf, index_data_size);
         vkCmdBindIndexBuffer(r->command_buffer,
-                             r->storage_buffers[BUFFER_INDEX].buffer,
+                             get_staging_buffer(r, BUFFER_INDEX)->buffer,
                              buffer_offset, VK_INDEX_TYPE_UINT32);
 
         if (!has_uniform_changes) {
@@ -4834,7 +4848,7 @@ static void flush_draw_queue_internal(NV2AState *d)
             VkDeviceSize buffer_offset = pgraph_vk_update_index_buffer(
                 pg, prim_rw.indices, rewrite_size);
             vkCmdBindIndexBuffer(r->command_buffer,
-                                 r->storage_buffers[BUFFER_INDEX].buffer,
+                                 get_staging_buffer(r, BUFFER_INDEX)->buffer,
                                  buffer_offset, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(r->command_buffer, prim_rw.num_indices,
                              1, 0, 0, 0);
@@ -4854,7 +4868,7 @@ static void flush_draw_queue_internal(NV2AState *d)
             VkDeviceSize buffer_offset = pgraph_vk_update_index_buffer(
                 pg, cmds, indirect_size);
             vkCmdDrawIndirect(r->command_buffer,
-                              r->storage_buffers[BUFFER_INDEX].buffer,
+                              get_staging_buffer(r, BUFFER_INDEX)->buffer,
                               buffer_offset, entry_count,
                               sizeof(VkDrawIndirectCommand));
         } else if (has_uniform_changes) {
@@ -4891,7 +4905,7 @@ static void flush_draw_queue_internal(NV2AState *d)
                     VkDeviceSize buf_off = pgraph_vk_update_index_buffer(
                         pg, cmds, indirect_size);
                     vkCmdDrawIndirect(r->command_buffer,
-                                      r->storage_buffers[BUFFER_INDEX].buffer,
+                                      get_staging_buffer(r, BUFFER_INDEX)->buffer,
                                       buf_off, group_count,
                                       sizeof(VkDrawIndirectCommand));
                 } else {
@@ -5621,13 +5635,13 @@ static void emit_reorder_entry(PGRAPHState *pg, ReorderWindowEntry *e,
     switch (e->draw_mode) {
     case RW_DRAW_INDEXED:
         vkCmdBindIndexBuffer(r->command_buffer,
-                             r->storage_buffers[BUFFER_INDEX].buffer,
+                             get_staging_buffer(r, BUFFER_INDEX)->buffer,
                              e->index_indirect_offset, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(r->command_buffer, e->draw_count, 1, 0, 0, 0);
         break;
     case RW_DRAW_INDIRECT:
         vkCmdDrawIndirect(r->command_buffer,
-                          r->storage_buffers[BUFFER_INDEX].buffer,
+                          get_staging_buffer(r, BUFFER_INDEX)->buffer,
                           e->index_indirect_offset, e->draw_count,
                           sizeof(VkDrawIndirectCommand));
         break;
@@ -6786,7 +6800,7 @@ void pgraph_vk_flush_draw(NV2AState *d)
             VkDeviceSize buffer_offset = pgraph_vk_update_index_buffer(
                 pg, prim_rw.indices, rewrite_size);
             vkCmdBindIndexBuffer(r->command_buffer,
-                                 r->storage_buffers[BUFFER_INDEX].buffer,
+                                 get_staging_buffer(r, BUFFER_INDEX)->buffer,
                                  buffer_offset, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(r->command_buffer, prim_rw.num_indices, 1, 0, 0,
                              0);
@@ -6806,7 +6820,7 @@ void pgraph_vk_flush_draw(NV2AState *d)
             VkDeviceSize buffer_offset = pgraph_vk_update_index_buffer(
                 pg, cmds, indirect_size);
             vkCmdDrawIndirect(r->command_buffer,
-                              r->storage_buffers[BUFFER_INDEX].buffer,
+                              get_staging_buffer(r, BUFFER_INDEX)->buffer,
                               buffer_offset, pg->draw_arrays_length,
                               sizeof(VkDrawIndirectCommand));
         } else {
@@ -6894,7 +6908,7 @@ draw_arrays_done:
 
         NV2A_PHASE_TIMER_BEGIN(draw_vk_cmd);
         vkCmdBindIndexBuffer(r->command_buffer,
-                             r->storage_buffers[BUFFER_INDEX].buffer,
+                             get_staging_buffer(r, BUFFER_INDEX)->buffer,
                              buffer_offset, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(r->command_buffer, draw_index_count, 1, 0, 0, 0);
         end_draw(pg);
@@ -6961,7 +6975,7 @@ inline_elements_done:
             VkDeviceSize idx_offset = pgraph_vk_update_index_buffer(
                 pg, prim_rw.indices, rewrite_size);
             vkCmdBindIndexBuffer(r->command_buffer,
-                                 r->storage_buffers[BUFFER_INDEX].buffer,
+                                 get_staging_buffer(r, BUFFER_INDEX)->buffer,
                                  idx_offset, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(r->command_buffer, prim_rw.num_indices, 1, 0, 0,
                              0);
@@ -7041,7 +7055,7 @@ inline_buffer_done:
             VkDeviceSize idx_offset = pgraph_vk_update_index_buffer(
                 pg, prim_rw.indices, rewrite_size);
             vkCmdBindIndexBuffer(r->command_buffer,
-                                 r->storage_buffers[BUFFER_INDEX].buffer,
+                                 get_staging_buffer(r, BUFFER_INDEX)->buffer,
                                  idx_offset, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(r->command_buffer, prim_rw.num_indices, 1, 0, 0,
                              0);
