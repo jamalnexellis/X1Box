@@ -1281,6 +1281,11 @@ add_executable(test-uniform-update EXCLUDE_FROM_ALL
 target_include_directories(test-uniform-update PRIVATE "${REPO_ROOT}" "${REPO_ROOT}/include")
 target_compile_options(test-uniform-update PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(test-uniform-value-compare EXCLUDE_FROM_ALL
+  "${REPO_ROOT}/android/test/cpp/test-uniform-value-compare.c")
+target_include_directories(test-uniform-value-compare PRIVATE "${REPO_ROOT}")
+target_compile_options(test-uniform-value-compare PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(test-descriptor-bind EXCLUDE_FROM_ALL
   "${REPO_ROOT}/android/test/cpp/test-descriptor-bind.c")
 target_include_directories(test-descriptor-bind PRIVATE "${REPO_ROOT}")

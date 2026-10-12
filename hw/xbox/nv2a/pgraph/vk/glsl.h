@@ -21,6 +21,7 @@
 #define HW_XBOX_NV2A_PGRAPH_VK_GLSL_H
 
 #include "qemu/osdep.h"
+#include "uniform-value-compare.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -160,8 +161,9 @@ static inline void uniform_copy(ShaderUniformLayout *layout, int idx,
 }
 
 /* Compare only reflected value bytes. Padding and NaN payloads stay intact. */
-static inline bool uniform_copy_if_changed(ShaderUniformLayout *layout, int idx,
-    const void *values, size_t value_size, size_t count)
+static inline bool uniform_copy_if_changed_mode(ShaderUniformLayout *layout,
+    int idx, const void *values, size_t value_size, size_t count,
+    bool small_compare)
 {
     assert(idx > 0 && (size_t)idx <= layout->num_uniforms);
     const ShaderUniform *u = &layout->uniforms[idx - 1];
@@ -174,14 +176,20 @@ static inline bool uniform_copy_if_changed(ShaderUniformLayout *layout, int idx,
     const char *in = values;
     if (remaining <= element_size || u->stride == element_size) {
         assert(out + remaining <= maximum);
-        if (!remaining || !memcmp(out, in, remaining)) return false;
+        bool equal = !remaining || (small_compare ?
+            nv2a_vk_uniform_values_equal(out, in, remaining) :
+            !memcmp(out, in, remaining));
+        if (equal) return false;
         memcpy(out, in, remaining);
         return true;
     }
     bool changed = false;
     while (remaining) {
         assert(out + element_size <= maximum);
-        if (memcmp(out, in, element_size)) {
+        bool equal = small_compare ?
+            nv2a_vk_uniform_values_equal(out, in, element_size) :
+            !memcmp(out, in, element_size);
+        if (!equal) {
             memcpy(out, in, element_size);
             changed = true;
         }
@@ -190,6 +198,13 @@ static inline bool uniform_copy_if_changed(ShaderUniformLayout *layout, int idx,
         in += element_size;
     }
     return changed;
+}
+
+static inline bool uniform_copy_if_changed(ShaderUniformLayout *layout, int idx,
+    const void *values, size_t value_size, size_t count)
+{
+    return uniform_copy_if_changed_mode(layout, idx, values, value_size, count,
+                                        false);
 }
 
 static inline

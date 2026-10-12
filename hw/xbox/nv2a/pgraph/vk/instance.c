@@ -563,6 +563,8 @@ static void add_optional_device_extension_names(
         "debug.xemu.vk.pipeline_fast_compile");
     r->exact_uniform_updates = android_debug_property_enabled(
         "debug.xemu.vk.uniform_exact");
+    r->small_uniform_compare = android_debug_property_enabled(
+        "debug.xemu.vk.uniform_small");
     r->descriptor_bind_memo = android_debug_property_enabled(
         "debug.xemu.vk.desc_memo");
 #else
@@ -570,10 +572,14 @@ static void add_optional_device_extension_names(
     r->unoptimized_pipeline_compile = fast_compile && !strcmp(fast_compile, "1");
     const char *uniform_exact = getenv("XEMU_VK_UNIFORM_EXACT");
     r->exact_uniform_updates = uniform_exact && !strcmp(uniform_exact, "1");
+    const char *uniform_small = getenv("XEMU_VK_UNIFORM_SMALL");
+    r->small_uniform_compare = uniform_small && !strcmp(uniform_small, "1");
     const char *desc_memo = getenv("XEMU_VK_DESC_MEMO");
     r->descriptor_bind_memo = desc_memo && !strcmp(desc_memo, "1");
 #endif
     VK_LOG_ERROR("exact uniform updates=%d", r->exact_uniform_updates);
+    VK_LOG_ERROR("inline small uniform comparisons=%d",
+                 r->small_uniform_compare && r->exact_uniform_updates);
     VK_LOG_ERROR("exact descriptor bind memo=%d", r->descriptor_bind_memo);
     /* Feedback is diagnostic only. No extension or pNext cost in FPS runs. */
     r->pipeline_creation_feedback_supported = nv2a_stall_profile_enabled &&

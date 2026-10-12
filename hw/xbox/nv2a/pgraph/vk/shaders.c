@@ -1600,7 +1600,8 @@ static ShaderBinding *get_shader_binding_for_state(PGRAPHVkState *r,
 static bool apply_uniform_updates(ShaderUniformLayout *layout,
                                   const UniformInfo *info, int *locs,
                                   void *values, size_t count,
-                                  const void *const *sources, bool exact)
+                                  const void *const *sources, bool exact,
+                                  bool small_compare)
 {
     bool changed = false;
     for (int i = 0; i < count; i++) {
@@ -1609,7 +1610,8 @@ static bool apply_uniform_updates(ShaderUniformLayout *layout,
                                 (char *)values + info[i].val_offs;
             size_t words = (info[i].size * info[i].count) / 4;
             if (exact) {
-                changed |= uniform_copy_if_changed(layout, locs[i], source, 4, words);
+                changed |= uniform_copy_if_changed_mode(layout, locs[i],
+                    source, 4, words, small_compare);
             } else {
                 uniform_copy(layout, locs[i], (void *)source, 4, words);
             }
@@ -1677,7 +1679,8 @@ void pgraph_vk_update_shader_uniforms(PGRAPHState *pg)
                                   getter_locs, &vsh_values);
     bool values_changed = apply_uniform_updates(vsh_layout, VshUniformInfo,
                           binding->vsh.uniform_locs, &vsh_values,
-                          VshUniform__COUNT, sources, r->exact_uniform_updates);
+                          VshUniform__COUNT, sources, r->exact_uniform_updates,
+                          r->small_uniform_compare);
 
     PshUniformValues psh_values;
     pgraph_glsl_set_psh_uniform_values(pg, binding->psh.uniform_locs,
@@ -1698,7 +1701,8 @@ void pgraph_vk_update_shader_uniforms(PGRAPHState *pg)
     }
     values_changed |= apply_uniform_updates(psh_layout, PshUniformInfo,
                           binding->psh.uniform_locs, &psh_values,
-                          PshUniform__COUNT, NULL, r->exact_uniform_updates);
+                          PshUniform__COUNT, NULL, r->exact_uniform_updates,
+                          r->small_uniform_compare);
 
     if (r->exact_uniform_updates) {
         /* Existing force-upload flags from binding/frame/reset remain set.

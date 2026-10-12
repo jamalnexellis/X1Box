@@ -1422,6 +1422,7 @@ typedef struct PGRAPHVkState {
     ShaderModuleInfo *quad_vert_module, *solid_frag_module;
     bool shader_bindings_changed;
     bool exact_uniform_updates;
+    bool small_uniform_compare;
     bool descriptor_bind_memo;
     NV2AVkDescriptorBind descriptor_bind_last;
     bool use_push_constants_for_uniform_attrs;
