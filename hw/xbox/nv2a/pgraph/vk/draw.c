@@ -805,6 +805,13 @@ static void init_render_pass_state(PGRAPHState *pg, RenderPassState *state)
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
 
+    /* All bytes participate in cache/dirty comparisons, including load ops
+     * when the caller only needs the attachment formats. */
+    memset(state, 0, sizeof(*state));
+    state->color_load_op = VK_ATTACHMENT_LOAD_OP_LOAD;
+    state->zeta_load_op = VK_ATTACHMENT_LOAD_OP_LOAD;
+    state->stencil_load_op = VK_ATTACHMENT_LOAD_OP_LOAD;
+
     state->color_format = r->color_binding ?
                               r->color_binding->host_fmt.vk_format :
                               VK_FORMAT_UNDEFINED;
@@ -1255,14 +1262,15 @@ static bool check_pipeline_dirty(PGRAPHState *pg)
     }
 #endif
 
-    if (memcmp(r->vertex_attribute_descriptions,
+    if (!r->pipeline_binding->key.dynamic_vertex_input &&
+        (memcmp(r->vertex_attribute_descriptions,
                r->pipeline_binding->key.attribute_descriptions,
                r->num_active_vertex_attribute_descriptions *
                    sizeof(r->vertex_attribute_descriptions[0])) ||
         memcmp(r->vertex_binding_descriptions,
                r->pipeline_binding->key.binding_descriptions,
                r->num_active_vertex_binding_descriptions *
-                   sizeof(r->vertex_binding_descriptions[0]))) {
+                   sizeof(r->vertex_binding_descriptions[0])))) {
         return true;
     }
 
@@ -1281,12 +1289,15 @@ static void init_pipeline_key(PGRAPHState *pg, PipelineKey *key)
      * full state in each pipeline binding for collision checks, rather than
      * copying and rehashing it on every pipeline lookup. */
     key->shader_state_hash = r->shader_binding->node.hash;
-    memcpy(key->binding_descriptions, r->vertex_binding_descriptions,
-           sizeof(key->binding_descriptions[0]) *
-               r->num_active_vertex_binding_descriptions);
-    memcpy(key->attribute_descriptions, r->vertex_attribute_descriptions,
-           sizeof(key->attribute_descriptions[0]) *
-               r->num_active_vertex_attribute_descriptions);
+    key->dynamic_vertex_input = r->dynamic_vertex_input_enabled;
+    if (!key->dynamic_vertex_input) {
+        memcpy(key->binding_descriptions, r->vertex_binding_descriptions,
+               sizeof(key->binding_descriptions[0]) *
+                   r->num_active_vertex_binding_descriptions);
+        memcpy(key->attribute_descriptions, r->vertex_attribute_descriptions,
+               sizeof(key->attribute_descriptions[0]) *
+                   r->num_active_vertex_attribute_descriptions);
+    }
 
 #if OPT_DYNAMIC_STATES
     const int regs[] = {
@@ -1740,6 +1751,9 @@ static void create_pipeline(PGRAPHState *pg)
 #endif
     };
     int num_dynamic_states = OPT_DYNAMIC_STATES ? 6 : 2;
+    if (key.dynamic_vertex_input) {
+        dynamic_states[num_dynamic_states++] = VK_DYNAMIC_STATE_VERTEX_INPUT_EXT;
+    }
     if (use_dyn_ds) {
         dynamic_states[num_dynamic_states++] = VK_DYNAMIC_STATE_CULL_MODE;
         dynamic_states[num_dynamic_states++] = VK_DYNAMIC_STATE_FRONT_FACE;
@@ -1921,7 +1935,7 @@ static void create_pipeline(PGRAPHState *pg)
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .stageCount = num_active_shader_stages,
         .pStages = shader_stages,
-        .pVertexInputState = &vertex_input,
+        .pVertexInputState = key.dynamic_vertex_input ? NULL : &vertex_input,
         .pInputAssemblyState = &input_assembly,
         .pViewportState = &viewport_state,
         .pRasterizationState = &rasterizer,
@@ -1939,6 +1953,15 @@ static void create_pipeline(PGRAPHState *pg)
     VK_CHECK(vkCreateGraphicsPipelines(r->device, r->vk_pipeline_cache, 1,
                                        &pipeline_create_info, NULL, &pipeline));
     nv2a_stall_record(NV2A_STALL_PIPELINE_CREATE, pipeline_start, 0);
+#ifdef __ANDROID__
+    if (nv2a_stall_profile_enabled) {
+        __android_log_print(ANDROID_LOG_INFO, "xemu-pipeline-input",
+            "dynamic=%d shader_hash=%016" PRIx64 " bindings=%d attributes=%d",
+            key.dynamic_vertex_input, key.shader_state_hash,
+            r->num_active_vertex_binding_descriptions,
+            r->num_active_vertex_attribute_descriptions);
+    }
+#endif
 
     snode->pipeline = pipeline;
     snode->layout = layout;
@@ -4725,6 +4748,13 @@ static void snapshot_vertex_buffers(PGRAPHState *pg, ReorderWindowEntry *e,
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
     e->num_vertex_bindings = r->num_active_vertex_binding_descriptions;
+    if (e->pipeline_binding->key.dynamic_vertex_input) {
+        vk_vertex_input_snapshot(&e->vertex_input,
+            r->num_active_vertex_binding_descriptions,
+            r->vertex_binding_descriptions,
+            r->num_active_vertex_attribute_descriptions,
+            r->vertex_attribute_descriptions);
+    }
     for (int i = 0; i < e->num_vertex_bindings; i++) {
         int attr_idx = r->vertex_attribute_descriptions[i].location;
         int buffer_idx = (inline_map & (1 << attr_idx)) ? BUFFER_VERTEX_INLINE :
@@ -5356,6 +5386,14 @@ static void emit_reorder_entry(PGRAPHState *pg, ReorderWindowEntry *e,
                            VK_SHADER_STAGE_VERTEX_BIT, vtx_offset,
                            e->num_push_values * 4 * sizeof(float),
                            e->push_values);
+    }
+
+    if (e->pipeline_binding->key.dynamic_vertex_input) {
+        /* The layout belongs to this entry, even after a later draw changed
+         * the live vertex state or after the window was sorted. Always emit
+         * it so that a preceding static clear pipeline cannot invalidate it. */
+        vk_vertex_input_emit(vkCmdSetVertexInputEXT, r->command_buffer,
+                             &e->vertex_input);
     }
 
     if (e->num_vertex_bindings > 0 &&
@@ -6151,6 +6189,16 @@ static void bind_vertex_buffer(PGRAPHState *pg, uint16_t inline_map,
                                VkDeviceSize offset)
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
+
+    if (r->pipeline_binding->key.dynamic_vertex_input) {
+        NV2AVkVertexInput input;
+        vk_vertex_input_snapshot(&input,
+            r->num_active_vertex_binding_descriptions,
+            r->vertex_binding_descriptions,
+            r->num_active_vertex_attribute_descriptions,
+            r->vertex_attribute_descriptions);
+        vk_vertex_input_emit(vkCmdSetVertexInputEXT, r->command_buffer, &input);
+    }
 
     if (r->num_active_vertex_binding_descriptions == 0) {
         return;

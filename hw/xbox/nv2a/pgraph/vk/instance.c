@@ -543,6 +543,20 @@ static void add_optional_device_extension_names(
         available_extensions, enabled_extension_names,
         VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
+    /* Opt-in until moving-gameplay comparisons establish the benefit. */
+#ifdef __ANDROID__
+    r->dynamic_vertex_input_requested = android_debug_property_enabled(
+        "debug.xemu.vk.vertex_input_dynamic");
+#else
+    const char *dynamic_input = getenv("XEMU_VK_VERTEX_INPUT_DYNAMIC");
+    r->dynamic_vertex_input_requested = dynamic_input &&
+                                        !strcmp(dynamic_input, "1");
+#endif
+    r->dynamic_vertex_input_enabled = r->dynamic_vertex_input_requested &&
+        add_extension_if_available(available_extensions,
+                                   enabled_extension_names,
+                                   VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
+
     if (r->device_props.apiVersion < VK_API_VERSION_1_3) {
         r->extended_dynamic_state_supported = add_extension_if_available(
             available_extensions, enabled_extension_names,
@@ -957,6 +971,29 @@ static bool create_logical_device(PGRAPHState *pg, Error **errp)
 
     void *next_struct = NULL;
 
+    VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT vertex_input_features;
+    if (r->dynamic_vertex_input_enabled) {
+        VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT query = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT,
+        };
+        VkPhysicalDeviceFeatures2 features = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &query,
+        };
+        if (vkGetPhysicalDeviceFeatures2) {
+            vkGetPhysicalDeviceFeatures2(r->physical_device, &features);
+        }
+        r->dynamic_vertex_input_enabled = query.vertexInputDynamicState;
+        if (r->dynamic_vertex_input_enabled) {
+            vertex_input_features = (VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT){
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT,
+                .vertexInputDynamicState = VK_TRUE,
+                .pNext = next_struct,
+            };
+            next_struct = &vertex_input_features;
+        }
+    }
+
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT eds_features;
     if (r->extended_dynamic_state_supported &&
         r->device_props.apiVersion < VK_API_VERSION_1_3) {
@@ -1138,6 +1175,16 @@ static bool create_logical_device(PGRAPHState *pg, Error **errp)
     PATCH_EDS1(vkCmdSetStencilTestEnable,      vkCmdSetStencilTestEnableEXT);
     PATCH_EDS1(vkCmdSetStencilOp,              vkCmdSetStencilOpEXT);
 #undef PATCH_EDS1
+
+    if (r->dynamic_vertex_input_enabled && !vkCmdSetVertexInputEXT) {
+        r->dynamic_vertex_input_enabled = false;
+    }
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "hakuX-vk",
+                       "dynamic vertex input requested=%d enabled=%d",
+                       r->dynamic_vertex_input_requested,
+                       r->dynamic_vertex_input_enabled);
+#endif
 
     /* Do not advertise EDS1 to the renderer unless every command it emits is
      * callable. Some Android Vulkan loaders expose the feature/extension but

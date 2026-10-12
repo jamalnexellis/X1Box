@@ -24,6 +24,7 @@
 #include "qemu/thread.h"
 #include "present-reuse.h"
 #include "vertex-propagation.h"
+#include "vertex-input.h"
 #include "cubemap-copy.h"
 #include "qemu/queue.h"
 #include "qemu/lru.h"
@@ -229,6 +230,7 @@ typedef struct RenderPass {
 
 typedef struct PipelineKey {
     bool clear;
+    bool dynamic_vertex_input;
     RenderPassState render_pass_state;
     uint64_t shader_state_hash;
     uint32_t regs[OPT_DYNAMIC_STATES ? 6 : 9];
@@ -1015,6 +1017,7 @@ typedef struct ReorderWindowEntry {
     VkBuffer vertex_buffers[NV2A_VERTEXSHADER_ATTRIBUTES];
     VkDeviceSize vertex_offsets[NV2A_VERTEXSHADER_ATTRIBUTES];
     int num_vertex_bindings;
+    NV2AVkVertexInput vertex_input;
 
     ReorderDrawMode draw_mode;
     VkDeviceSize index_indirect_offset;
@@ -1088,6 +1091,8 @@ typedef struct PGRAPHVkState {
     bool custom_border_color_extension_enabled;
     bool memory_budget_extension_enabled;
     bool extended_dynamic_state_supported;
+    bool dynamic_vertex_input_requested;
+    bool dynamic_vertex_input_enabled;
 #if OPT_DYNAMIC_BLEND
     bool eds3_blend_supported;
 #endif

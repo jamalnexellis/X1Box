@@ -1385,6 +1385,15 @@ add_dependencies(test-pipeline-key glib_ep)
 endif()
 
 if(XEMU_ENABLE_VULKAN)
+  add_executable(test-vertex-input EXCLUDE_FROM_ALL
+    "${REPO_ROOT}/android/test/cpp/test-vertex-input.c")
+  target_include_directories(test-vertex-input PRIVATE "${REPO_ROOT}")
+  target_compile_options(test-vertex-input PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+  add_executable(test-vertex-input-vk EXCLUDE_FROM_ALL
+    "${REPO_ROOT}/android/test/cpp/test-vertex-input-vk.c")
+  target_include_directories(test-vertex-input-vk PRIVATE "${REPO_ROOT}")
+  target_compile_options(test-vertex-input-vk PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+  target_link_libraries(test-vertex-input-vk PRIVATE vulkan)
   add_executable(test-glslang-prewarm EXCLUDE_FROM_ALL
     "${REPO_ROOT}/android/test/cpp/test-glslang-prewarm.c"
   )

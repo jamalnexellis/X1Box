@@ -291,3 +291,59 @@ pipeline's saved state. Clear lookups do not require a shader-state pointer.
 Keep render-pass load semantics and every keyed register/descriptor field.
 Passing equivalence checks or reducing lookup-key bytes does not establish
 a game FPS gain; measure moving gameplay separately with diagnostics off.
+
+# Owned dynamic vertex inputs
+
+`test-vertex-input` exercises the production snapshot/command helper across
+1,088 cases with zero through sixteen bindings/attributes. It checks every
+converted Vulkan field, deterministic unused storage, null arrays for empty
+input and preservation after the caller overwrites both source arrays.
+Android's native target keeps assertions enabled. Run the same helper under
+host ASan/UBSan with Vulkan headers installed:
+
+```sh
+cc -std=c11 -O3 -UNDEBUG -Wall -Wextra -Werror \
+  -fsanitize=address,undefined -I. android/test/cpp/test-vertex-input.c \
+  -o "$task_dir/vertex-input-check"
+"$task_dir/vertex-input-check"
+```
+
+`test-vertex-input-vk` requires Vulkan 1.3 and the vertex-input dynamic-state
+feature on the selected test GPU. Compile its three generated shaders, then
+run the native CMake target with those SPIR-V paths:
+
+```sh
+glslc android/test/cpp/vertex-input.vert -o "$task_dir/vertex-input.vert.spv"
+glslc android/test/cpp/vertex-input.frag -o "$task_dir/vertex-input.frag.spv"
+glslc android/test/cpp/vertex-input-empty.vert -o "$task_dir/vertex-input-empty.vert.spv"
+"$task_dir/test-vertex-input-vk" "$task_dir/vertex-input.vert.spv" \
+  "$task_dir/vertex-input.frag.spv" "$task_dir/vertex-input-empty.vert.spv"
+```
+
+Four static/dynamic/dynamic/static rounds verify 65,536 exact RGBA pixels
+each while changing strides, offsets and float/normalized color formats.
+Two empty-input draws add 8,192 pixels. Dynamic draws use the production
+owned-state helper after overwriting the live descriptions and after binding
+a static pipeline in the same command buffer. These generated pixels do not
+exercise all guest formats or prove correctness for a complete game. Creation
+timings use warmed driver state and exclude a preparatory static pipeline;
+they are synthetic timings, not cold-game compilation or FPS measurements.
+
+The production route stays opt-in: set Android property
+`debug.xemu.vk.vertex_input_dynamic=1`, or desktop environment variable
+`XEMU_VK_VERTEX_INPUT_DYNAMIC=1`, before starting the emulator. It requires
+the extension, queried feature and callable entry point; otherwise it uses
+static input. Check the Android startup message's requested/enabled values.
+Each immediate/merged draw emits its current layout; reordered draws retain
+their own layout. Empty-input draws also set state. Static clear/display
+pipelines retain their existing behavior, and shader-state collision checks
+remain complete. See the [Khronos command requirements](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdSetVertexInputEXT.html).
+
+Compare modes with profiling off, identical seed files and moving rivals.
+A warm shader seed must include the exact driver-identity file written by
+that driver and shader-cache ABI. Do not fabricate it or disable production
+cache invalidation. Reject a matched-cache comparison if startup reports a
+driver-identity mismatch or different module warm-up counts. A newly isolated
+test files directory can lack this identity even on the same phone; imported
+shaders will then be correctly discarded. Record this separately from the
+unprofiled FPS measurements.

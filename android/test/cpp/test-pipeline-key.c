@@ -26,6 +26,7 @@ typedef struct { uint32_t values[4]; } VkVertexInputAttributeDescription;
 typedef struct { uint8_t bytes[4096]; } ShaderState;
 typedef struct {
     bool clear;
+    bool dynamic_vertex_input;
     RenderPassState render_pass_state;
     uint64_t shader_state_hash;
     uint32_t regs[6];
@@ -151,6 +152,12 @@ int main(void)
         check(&a, &b, &sa, &sb); checks++;
     }
     assert(checks == 132000);
+    PipelineKey static_key = {0}, dynamic_key = {0};
+    ShaderState shader = {0};
+    dynamic_key.dynamic_vertex_input = true;
+    assert(vk_pipeline_keys_differ(&static_key, &dynamic_key,
+                                  sizeof(static_key), false,
+                                  &shader, &shader, sizeof(shader)));
     printf("Pipeline key equivalence passed: %u cases; legacy=%zu compact=%zu shader=%zu bytes\n",
            checks, sizeof(LegacyPipelineKey), sizeof(PipelineKey), sizeof(ShaderState));
     return 0;

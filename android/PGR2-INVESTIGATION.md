@@ -2598,3 +2598,105 @@ installed and its emulator is stopped; the other Android profile is untouched.
 There is no new APK or accepted sustained FPS gain in this diagnosis. Native
 experiments and analysis run locally, with all captures/profiles/game data
 private and Judge/CI/CD disabled.
+
+### Perf38 dynamic vertex-input integration
+
+The generic renderer can now use `VK_EXT_vertex_input_dynamic_state` when
+explicitly requested and supported. Device creation checks the extension,
+queried feature and loaded entry point, with static-input fallback. Ordinary
+graphics-pipeline keys retain a distinct mode bit, all other keyed state and
+the full shader-state collision check. In dynamic mode vertex descriptions
+leave the pipeline key and are emitted for each draw. Reordered entries own
+their descriptions, so later state mutations or sorting cannot change a
+queued draw's input. Immediate, merged and empty-input paths also set state;
+clear/display pipelines remain static. This targets layout-only pipeline
+variants, as described in the [Khronos sample](https://docs.vulkan.org/samples/latest/samples/extensions/vertex_dynamic_state/README.html).
+
+Render-pass state initialization now defines all bytes, including the three
+load operations. Previously, a format-only caller's dirty comparison could
+read uninitialized load-operation fields. Pipeline creation keeps its LOAD
+semantics and render-pass begin still selects the appropriate load operations.
+This is a cache/dirty-check correctness fix; no independent FPS gain is claimed.
+
+Host ASan/UBSan and native arm64 checks pass 1,088 owned-input cases.
+Pipeline-key checks pass 132,000 legacy-equivalence cases on both platforms,
+plus separation of otherwise identical static/dynamic keys. On Adreno 830,
+the native generated-pixel fixture passes 270,336 exact RGBA comparisons:
+four sixteen-layout rounds and two empty-input draws. It exercises the same
+production helper, overwritten live arrays, static-pipeline transitions,
+strides, offsets and float/normalized formats. Synthetic warmed creation
+totals are 1.517/0.128/0.148/1.498 ms; record/submit/fence totals are
+3.645/3.533/3.747/3.775 ms. A preparatory static pipeline is excluded from
+these timings; they do not establish cold-game or sustained-FPS improvements.
+
+Perf38 builds locally as version 67 / `1.2.9-pgr2-perf38` in `.dev.local`.
+APK v2 signature, existing certificate, package/version and actual arm64
+feature strings pass verification. One version-increasing installation
+completes before gameplay, preserving original lab data and properties.
+APK SHA-256:
+`d373ba8e3aea7e5cffcc8cec3a64d4427808897dc6daf75b45f469ccdc361467`.
+
+### Perf38 moving comparisons and decision
+
+Four unprofiled OFF/ON/ON/OFF starts use the same signed APK, settings,
+warm shader seed and twenty-four-second native driving plan at 3x. Startup
+checks show no cache invalidation and the same 185/193 module warm-up in
+every case. The guest race is restarted through its retry confirmation;
+grid captures show the countdown. Player and three rivals move. Only
+complete flip windows between native touch timestamps enter the FPS pool.
+
+| Dynamic input | Case | Complete windows | Descriptive FPS |
+| --- | --- | ---: | ---: |
+| OFF | A | 4 | 28.144 |
+| ON | A | 4 | 26.060 |
+| ON | B | 4 | 27.226 |
+| OFF | B | 4 | 26.501 |
+
+OFF pools to 27.321 FPS and ON to 26.643 FPS, a descriptive 2.48% decrease.
+Window averages range from 24.157--29.312 OFF and 23.966--28.121 ON;
+all sixteen windows are below 29.7 FPS. Countdown timing, trajectories and
+barrier contact differ, so this does not establish a causal regression.
+It establishes no accepted benefit. Dynamic input stays OFF by default.
+Sustained original 30 FPS at Full HD or higher remains unverified. Internal
+scanout at 3x is 1920x1440 and native presentation is 2340x1080.
+
+A separate OFF diagnostic contains 644 complete moving frame intervals:
+median 35.303 ms, p95 50.245 ms, maximum 113.535 ms. Thirty pipeline
+creations total 290.364 ms with a 53.821 ms maximum. Creation metadata
+groups into twenty-eight shader-state hashes, with at most two creations
+per hash. These hashes describe observed metadata, not proven shader or
+pipeline equality. This segment offers little evidence of many repeated
+layout-only variants. One shader compile takes 4.652 ms; 201 texture decodes
+total 33.317 ms with a 1.164 ms maximum. Native presentation and GPU-fence
+waits reach 19.128/24.883 ms. Host phases overlap across threads and nest;
+their totals are not an additive GPU budget or proof that compilation alone
+explains the sustained speed shortfall.
+
+The final ON diagnostic starts in a fresh protected files directory lacking
+`gpu_driver_id.bin`. Production correctly invalidates the imported seed.
+It records 636 moving intervals, p95 52.056 ms and maximum 187.591 ms;
+35 pipeline creations reach 45.350 ms. There are 148 shader compiles before
+touch input and 24 during movement, unlike the warm OFF diagnostic. It is
+excluded from a matched-cache timing comparison. It does not invalidate the
+four warm unprofiled FPS cases. The private harness now preserves the exact
+current driver identity with the warm seed and rejects startup invalidation
+or changed warm-up counts. This harness correction has syntax/identity
+checks; no additional matched ON diagnostic is claimed in this session.
+
+All six reviewed grid/mid/end sets show coherent road, buildings, car and
+HUD. Three moving rivals are visible in each mid capture and progress on
+the minimap. Throttle/steering respond and release. Mid game clocks span
+3.871--4.454 seconds; ends span 22.954--25.420. End trajectories/contact
+differ, including one stopped car facing a building. This covers short
+starts, not complete turns/laps or artifacts between still captures. End
+thermal statuses are zero; captured emulator processes have no fatal
+exception, assertion or device loss.
+
+Both protected records restore their own HDD/preferences/EEPROM hashes and
+all twenty diagnostic properties. Final restoration is verified at 02:02:11
+Madrid, before the original 02:02:59 deadline. EEPROM ownership/mode and
+the other Android profile remain intact. Perf38 stays installed, dynamic
+input defaults OFF, and the emulator is stopped. Sixty-one selected build
+inputs are checked against committed sources and the delivered APK matches
+the installed artifact. Builds/tests remain local; Judge and CI/CD stay
+disabled. Game data, caches, captures and profiles remain private.
