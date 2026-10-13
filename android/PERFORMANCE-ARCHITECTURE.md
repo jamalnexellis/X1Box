@@ -169,6 +169,30 @@ is refused by the remaining-time reserve, before changing its mode. No ON
 result, completed ABBA, accepted FPS gain or new default is established.
 The phone is restored again; the comparison harness remains prepared.
 
+### Implemented uniform ownership correction (Perf49)
+
+Perf49 implements the narrower uniform-only ownership change. Each active
+slot gets a device-local uniform destination with the existing byte capacity;
+index/vertex ordering and the old submission dependency remain intact.
+Uniform-capacity finish reason 9 can defer FIFO completion until fenced slot
+reuse. Descriptor rebinding includes uniform destination changes, and the
+production transfer barrier now covers both shader stages that read uniforms.
+Generated host and Adreno pixel checks pass all 393,216 comparisons.
+
+The completed unprofiled 1x Barcelona pair gives 13.154 FPS ON and 13.393 FPS
+OFF with thermal status 1 throughout both runs. Later windows give 11.776 and
+11.573 FPS. Controls, numeric timer progression and advancing rival markers
+are observed; reviewed images are coherent. Different end positions/speeds
+limit comparison, and no sustained improvement is accepted. All original
+preferences, affected runtime properties and snapshot sidecars are restored;
+Slot 1 is never saved over. Full HD remains unmeasured in this pair.
+
+Removing an immediate host wait has not produced an appreciable throughput
+gain here. The next attribution must separate reason-9 completion waits from
+slot-recycling waits and the retained shared-resource/GPU dependency chain,
+using Perf49's actual native build. The current pair alone does not show
+where the former wait moved or establish a new dominant bottleneck.
+
 ## Architectural decision gates
 
 **If useful translated execution dominates the delayed frames:** identify

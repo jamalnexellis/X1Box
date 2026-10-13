@@ -3868,8 +3868,43 @@ certificate. Signature, manifest and actual arm64 correction strings are
 verified. APK SHA-256:
 3e69044916727ebd6308d342724b230e75f952af94385ada11efd6b49ae485cb.
 
-Device correctness and the prepared load-only Barcelona comparison are
-pending. Compilation and host pixel validation establish no FPS gain,
-sustained original speed or Full HD performance. Judge and CI/CD remain
-disabled; private game/device assets and phone harnesses are not committed.
+The same arm64 fixture passes all 393,216 exact pixel comparisons on the
+phone's Adreno 830. The phone has no synchronization validation layer, so
+the zero-error validation-layer result applies only to host llvmpipe.
+The signed APK is installed in the separate test package and reports three
+fenced uniform destinations of 8 MiB each with the new route enabled.
 
+The completed load-only Barcelona ON/OFF pair uses the signed Perf49 APK,
+resolution 1x and the phone's existing settings. Capacity, copy routes,
+instruction handling and other runtime options are held constant; no CPU/JIT
+sampler or GPU recorder runs during the FPS measurements. Both runs start
+after a numeric race timer is visible, then use the same 24-second native
+touch sequence. Four complete five-second flip windows fall wholly inside
+each input interval. ON gives 13.154 FPS and OFF 13.393 FPS; later windows
+give 11.776 and 11.573 FPS. Thermal status remains 1 at both ends of both runs.
+This pair demonstrates no appreciable FPS improvement. It does not establish
+a regression either: end positions and speeds differ, and this is one short
+pair rather than repeated matched trajectories.
+
+Reviewed race-ready and end images show coherent wet roads, buildings and
+HUD. The numeric timer advances from about 0:03.7 to 0:17.7, the player moves
+and steers, and rival markers advance. End speeds are 85 km/h ON and 36 km/h
+OFF; neither run covers a clean full lap or proves all-game compatibility.
+No fatal exception, device loss, fatal signal or assertion appears in either
+captured app log. Earlier harness checks incorrectly assumed an old runtime
+profile and failed to allow timestamp padding; those checks are corrected.
+
+The phone is restored at 02:41:30 Madrid, before the 02:42:44 deadline.
+All existing snapshot sidecar hashes, original preference values and affected
+runtime properties are verified unchanged. Slot 1 is only loaded; there is
+no snapshot-save operation, replacement HDD or benchmark seed. The lab keeps
+the verified Perf49 APK with its default uniform route; the original package
+is untouched. Judge and CI/CD remain disabled, and private game/device assets
+and phone harnesses are not committed.
+
+Compilation, pixel tests and these short race measurements do not establish
+sustained original speed or Full HD performance. No new mechanism trace yet
+proves how much of the former capacity wait becomes slot-recycling wait or
+other GPU dependency time. A Perf49 capture with matching native symbols is
+prepared for that attribution; it has not been executed or accepted as an
+FPS improvement.
