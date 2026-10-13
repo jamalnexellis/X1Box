@@ -403,9 +403,16 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
 {
     PGRAPHState *pg = &d->pgraph;
     PGRAPHVkState *r = pg->vk_renderer_state;
-    /* Opt in until moving-race performance and compatibility are established.
-     * Slots retain their existing fence retirement and upload capacities. */
+    extern int xemu_get_submit_frames(void);
+    int nframes = xemu_get_submit_frames();
+    bool uniform_arenas = nframes > 1;
 #ifdef __ANDROID__
+    char uniform_arena_property[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.xemu.vk.uniform_arenas",
+                          uniform_arena_property);
+    if (strcmp(uniform_arena_property, "0") == 0) {
+        uniform_arenas = false;
+    }
     char direct_upload[PROP_VALUE_MAX] = {0};
     __system_property_get("debug.xemu.vk.direct_upload", direct_upload);
     r->direct_draw_upload = strcmp(direct_upload, "1") == 0;
@@ -418,6 +425,10 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
                         r->direct_draw_upload ? 1 : r->per_slot_draw_buffers ? 2 : 0,
                         r->direct_draw_upload);
 #else
+    const char *uniform_arena_env = getenv("XEMU_VK_UNIFORM_ARENAS");
+    if (uniform_arena_env && strcmp(uniform_arena_env, "0") == 0) {
+        uniform_arenas = false;
+    }
     const char *direct_upload = getenv("XEMU_VK_DIRECT_UPLOAD");
     r->direct_draw_upload = direct_upload && strcmp(direct_upload, "1") == 0;
     r->per_slot_draw_buffers = r->direct_draw_upload ||
@@ -425,6 +436,7 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
     const char *surface_copy = getenv("XEMU_VK_SURFACE_BUFFER_COPY");
     r->surface_buffer_copy = surface_copy && strcmp(surface_copy, "1") == 0;
 #endif
+    r->per_slot_uniform_buffers = uniform_arenas && !r->per_slot_draw_buffers;
 
     const size_t mib = 1024 * 1024;
     size_t vram_size = memory_region_size(d->vram);
@@ -570,9 +582,6 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
         .buffer_size = vertex_inline_size,
     };
 
-    extern int xemu_get_submit_frames(void);
-    int nframes = xemu_get_submit_frames();
-
     size_t uniform_size;
     if (nframes >= 3)
         uniform_size = 128 * mib;
@@ -597,6 +606,7 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
 
     for (int i = 0; i < BUFFER_COUNT; i++) {
         if (is_per_frame_staging_buffer(i) ||
+            (r->per_slot_uniform_buffers && i == BUFFER_UNIFORM) ||
             (r->per_slot_draw_buffers &&
              (i == BUFFER_INDEX || i == BUFFER_VERTEX_INLINE || i == BUFFER_UNIFORM))) {
             VK_LOG("buffer_init: skip superseded global %s size=%zu",
@@ -785,6 +795,48 @@ bool pgraph_vk_init_buffers(NV2AState *d, Error **errp)
         }
         bitmap_clear(fs->uploaded_bitmap, 0, r->bitmap_size);
     }
+
+    if (r->per_slot_uniform_buffers) {
+        Error *uniform_error = NULL;
+        for (int i = 0; i < nframes; i++) {
+            FrameStagingState *fs = &r->frame_staging[i];
+            fs->uniform_gpu = (StorageBuffer){
+                .alloc_info = device_alloc_create_info,
+                .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                .buffer_size = fs->uniform_staging.buffer_size,
+            };
+            char name[64];
+            snprintf(name, sizeof(name), "FRAME%d_UNIFORM_GPU", i);
+            if (!create_buffer(pg, &fs->uniform_gpu, name, &uniform_error)) {
+                /* No commands or descriptors exist yet. Release the optional
+                 * destinations before falling back to the original bounded
+                 * shared allocation; a low-memory device must still boot. */
+                VK_LOG_ERROR("uniform arenas unavailable: %s",
+                             error_get_pretty(uniform_error));
+                error_free(uniform_error);
+                for (int j = 0; j < nframes; j++) {
+                    destroy_buffer(pg, &r->frame_staging[j].uniform_gpu);
+                }
+                r->per_slot_uniform_buffers = false;
+                if (!create_buffer(pg, &r->storage_buffers[BUFFER_UNIFORM],
+                                   "UNIFORM", errp)) {
+                    goto fail;
+                }
+                break;
+            }
+        }
+    }
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "xemu-vk",
+        "fenced uniform arenas=%d slots=%d capacity=%zu",
+        r->per_slot_uniform_buffers, nframes,
+        r->frame_staging[0].uniform_staging.buffer_size);
+#else
+    VK_LOG("fenced uniform arenas=%d slots=%d capacity=%zu",
+           r->per_slot_uniform_buffers, nframes,
+           r->frame_staging[0].uniform_staging.buffer_size);
+#endif
     VK_LOG_ERROR("buffer_init: per-frame staging created (%d frames, "
                  "idx=%zuMB vtx=%zuMB uni=%zuMB stg=%zuMB per-frame)",
                  nframes, idx_max >> 20, vtx_max >> 20, uni_max >> 20,

@@ -48,6 +48,12 @@ static unsigned value(unsigned which, unsigned row, unsigned component)
 {
     return (which*17+row*13+component*5)%61;
 }
+static unsigned destination_slot(unsigned mode, unsigned slot, unsigned type)
+{
+    /* Hybrid production path: only constants own per-slot GPU storage.
+     * Legacy reference: all destinations are shared. */
+    return mode == 3 || (mode == 2 && type != NV2A_VK_UPLOAD_UNIFORM) ? 0 : slot;
+}
 static VkPipeline pipeline(VkRenderPass pass, VkPipelineLayout layout, VkShaderModule vert, VkShaderModule frag)
 {
     VkPipelineShaderStageCreateInfo stages[2]={{.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,.stage=VK_SHADER_STAGE_VERTEX_BIT,.module=vert,.pName="main"},
@@ -143,11 +149,12 @@ int main(int argc,char **argv)
     VkFence fences[SLOTS]; VkFenceCreateInfo fi={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     for(unsigned slot=0;slot<SLOTS;slot++) CHECK(vkCreateFence(device,&fi,NULL,&fences[slot]));
     unsigned exact_pixels=0;
-    for(unsigned direct=0;direct<=1;direct++)for(unsigned slots=1;slots<=3;slots++) {
+    for(unsigned mode=0;mode<4;mode++)for(unsigned slots=1;slots<=3;slots++) {
+        bool direct=mode==1;
         bool in_flight[SLOTS]={0};
         CHECK(vkCreateSemaphore(device,&semaphore_info,NULL,&chain));
         for(unsigned slot=0;slot<slots;slot++) {
-            VkBuffer selected=direct?uploads[slot][NV2A_VK_UPLOAD_UNIFORM]:destinations[slot][NV2A_VK_UPLOAD_UNIFORM];
+            VkBuffer selected=direct?uploads[slot][NV2A_VK_UPLOAD_UNIFORM]:destinations[destination_slot(mode,slot,NV2A_VK_UPLOAD_UNIFORM)][NV2A_VK_UPLOAD_UNIFORM];
             VkDescriptorBufferInfo infos[2]={{selected,0,16},{selected,0,16}};
             VkWriteDescriptorSet writes[2]={{.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=sets[slot],.dstBinding=0,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,.pBufferInfo=&infos[0]},
                 {.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=sets[slot],.dstBinding=1,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,.pBufferInfo=&infos[1]}};
@@ -178,21 +185,25 @@ int main(int argc,char **argv)
             }
             VkCommandBuffer cmd=aux_cmds[slot];
             VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO}; CHECK(vkBeginCommandBuffer(cmd,&begin));
+            if(mode>=2) {
+                VkMemoryBarrier war={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT};
+                vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,1,&war,0,NULL,0,NULL);
+            }
             for(unsigned type=0;type<TYPES;type++) {
                 if(direct) nv2a_vk_draw_upload_barrier(cmd,uploads[slot][type],sizes[type],(NV2AVkDrawUpload)type);
                 else {
                     VkBufferMemoryBarrier host={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT,.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.buffer=uploads[slot][type],.size=sizes[type]};
                     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,1,&host,0,NULL);
-                    VkBufferCopy copy={.size=sizes[type]}; vkCmdCopyBuffer(cmd,uploads[slot][type],destinations[slot][type],1,&copy);
-                    VkBufferMemoryBarrier gpu={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.buffer=destinations[slot][type],.size=sizes[type]};
-                    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,NULL,1,&gpu,0,NULL);
+                    VkBuffer target=destinations[destination_slot(mode,slot,type)][type];
+                    VkBufferCopy copy={.size=sizes[type]}; vkCmdCopyBuffer(cmd,uploads[slot][type],target,1,&copy);
+                    nv2a_vk_draw_upload_transfer_barrier(cmd,target,sizes[type],(NV2AVkDrawUpload)type);
                 }
             }
             CHECK(vkEndCommandBuffer(cmd)); cmd=cmds[slot]; CHECK(vkBeginCommandBuffer(cmd,&begin));
             vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,pipelines[0]);
             uint32_t offsets[2]={0,(uint32_t)stride}; vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,layouts[0],0,1,&sets[slot],2,offsets);
-            VkBuffer vertex=direct?uploads[slot][NV2A_VK_UPLOAD_VERTEX]:destinations[slot][NV2A_VK_UPLOAD_VERTEX]; VkDeviceSize offset=0;
-            VkBuffer index=direct?uploads[slot][NV2A_VK_UPLOAD_INDEX]:destinations[slot][NV2A_VK_UPLOAD_INDEX];
+            VkBuffer vertex=direct?uploads[slot][NV2A_VK_UPLOAD_VERTEX]:destinations[destination_slot(mode,slot,NV2A_VK_UPLOAD_VERTEX)][NV2A_VK_UPLOAD_VERTEX]; VkDeviceSize offset=0;
+            VkBuffer index=direct?uploads[slot][NV2A_VK_UPLOAD_INDEX]:destinations[destination_slot(mode,slot,NV2A_VK_UPLOAD_INDEX)][NV2A_VK_UPLOAD_INDEX];
             vkCmdBindVertexBuffers(cmd,0,1,&vertex,&offset); vkCmdBindIndexBuffer(cmd,index,0,VK_INDEX_TYPE_UINT16);
             VkClearValue clear={.color={{1,0,1,1}}}; VkRenderPassBeginInfo rp={.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,.renderPass=pass,.framebuffer=framebuffer,.renderArea={.extent={W,W}},.clearValueCount=1,.pClearValues=&clear};
             vkCmdBeginRenderPass(cmd,&rp,VK_SUBPASS_CONTENTS_INLINE);
@@ -203,7 +214,7 @@ int main(int argc,char **argv)
             VkBufferMemoryBarrier read={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.buffer=readback,.offset=copy.bufferOffset,.size=W*W*4};
             vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&read,0,NULL); CHECK(vkEndCommandBuffer(cmd));
             NV2AVkDrawSubmit submit;
-            nv2a_vk_draw_submit_init(&submit,aux_cmds[slot],cmd,aux_done[slot],chain,pass_index>0,true,pass_index%4!=0);
+            nv2a_vk_draw_submit_init(&submit,aux_cmds[slot],cmd,aux_done[slot],chain,pass_index>0,true,mode<2 && pass_index%4!=0);
             CHECK(vkQueueSubmit(queue,2,submit.infos,fences[slot]));
             in_flight[slot]=true;
         }
@@ -212,7 +223,7 @@ int main(int argc,char **argv)
         for(unsigned i=0;i<N;i++)for(unsigned p=0;p<W*W;p++)for(unsigned c=0;c<4;c++)
             assert(((uint8_t*)pixels)[(i*W*W+p)*4+c]==value(i,i%2,c)+value(5,i,c)+value(7,i,c));
         vkDestroySemaphore(device,chain,NULL);
-        exact_pixels+=N*W*W; printf("PASS direct=%u slots=%u: %u exact RGBA pixels, indexed/indirect draws and both shader uniform stages\n",direct,slots,N*W*W);
+        exact_pixels+=N*W*W; printf("PASS mode=%u slots=%u: %u exact RGBA pixels, indexed/indirect draws and both shader uniform stages\n",mode,slots,N*W*W);
     }
     for(unsigned slot=0;slot<SLOTS;slot++) {vkDestroyFence(device,fences[slot],NULL);vkDestroySemaphore(device,aux_done[slot],NULL);}
     vkDestroyCommandPool(device,command_pool,NULL); vkDestroyPipeline(device,pipelines[0],NULL); vkDestroyPipeline(device,pipelines[1],NULL);

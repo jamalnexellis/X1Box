@@ -626,6 +626,7 @@ typedef enum FinishReason {
     VK_FINISH_REASON_FLIP_STALL,
     VK_FINISH_REASON_FLUSH,
     VK_FINISH_REASON_STALLED,
+    VK_FINISH_REASON_UNIFORM_CAPACITY,
 } FinishReason;
 
 typedef enum {
@@ -1297,6 +1298,9 @@ typedef struct PGRAPHVkState {
     FrameStagingState frame_staging[NUM_SUBMIT_FRAMES];
     bool direct_draw_upload;
     bool per_slot_draw_buffers;
+    /* Uniform destinations are immutable until their submission slot retires.
+     * Index/vertex destinations keep their existing shared-buffer barriers. */
+    bool per_slot_uniform_buffers;
     struct {
         int64_t started_us;
         uint64_t rotations, copied_bytes, bounding_bytes, runs, copy_us;
@@ -1551,6 +1555,9 @@ static inline VkResult pgraph_vk_wait_for_fences(PGRAPHVkState *r, uint32_t coun
 
 static inline StorageBuffer *get_staging_buffer(PGRAPHVkState *r, int buffer_id)
 {
+    if (r->per_slot_uniform_buffers && buffer_id == BUFFER_UNIFORM) {
+        return &r->frame_staging[r->current_frame].uniform_gpu;
+    }
     if (r->per_slot_draw_buffers) {
         switch (buffer_id) {
         case BUFFER_INDEX:

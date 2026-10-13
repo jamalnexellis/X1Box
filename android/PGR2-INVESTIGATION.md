@@ -3829,3 +3829,47 @@ for these comparisons. The lab remains on the verified final Perf48 APK
 with the original copy route selected. FullHD race performance and sustained
 30 FPS remain unverified. Raw captures and harnesses stay private, and
 Judge/CI/CD remain disabled.
+### Perf49: retire uniform storage by submission slot
+
+Barcelona's active-race diagnosis identifies the capacity finish in the
+uniform allocator as a concrete source of long host waits. Perf49 gives each
+active submission slot a separate device-local uniform destination. Uniform
+capacity now has its own finish reason (9): FIFO can submit that bounded batch
+and prepare the next slot, instead of waiting for the whole batch immediately.
+The existing fence is still waited before reusing that slot's staging,
+destination and command buffers.
+
+This route is enabled by default with multiple active slots. The comparison
+override is debug.xemu.vk.uniform_arenas=0 on Android or
+XEMU_VK_UNIFORM_ARENAS=0 on desktop. Existing full-slot direct/staged draw
+experiments retain their own selection. The uniform byte capacity and mobile
+submission bound stay unchanged; index/vertex destinations retain their
+shared-buffer ordering. Optional destination-allocation failure releases the
+new destinations and falls back to the original shared uniform allocation
+before any command or descriptor can reference them.
+
+Descriptor renewal now includes uniform-only slot changes. Transfer visibility
+covers both vertex and fragment uniform reads; the latter stage was missing
+from the old transfer barrier. The production barrier helper is used directly
+by the pixel fixture. Guest instructions, draw order, textures, guest fences,
+controller code, preferences and saved-state code are unchanged.
+
+On host llvmpipe, synchronization validation reports zero errors and all
+393,216 exact RGBA pixel comparisons pass. The twelve cases cover one/two/three
+slots with full-slot staged uploads, host-visible direct uploads, uniform-only
+GPU storage with shared index/vertex destinations, and the fully shared
+reference. Queued versions, fenced slot recycling, indexed/indirect draws and
+uniforms consumed by both shader stages are checked. These are generated
+correctness tests, not measured game FPS or full-game compatibility.
+
+The arm64 fixture cross-compiles. The locally built APK is code 78,
+1.2.9-pgr2-perf49, in the separate test package with the same local signing
+certificate. Signature, manifest and actual arm64 correction strings are
+verified. APK SHA-256:
+3e69044916727ebd6308d342724b230e75f952af94385ada11efd6b49ae485cb.
+
+Device correctness and the prepared load-only Barcelona comparison are
+pending. Compilation and host pixel validation establish no FPS gain,
+sustained original speed or Full HD performance. Judge and CI/CD remain
+disabled; private game/device assets and phone harnesses are not committed.
+

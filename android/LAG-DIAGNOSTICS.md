@@ -68,6 +68,14 @@ submission chain at the main draw instead of the auxiliary buffer. Inline
 render-context submits retain their legacy zero `c` field. Queue timing alone
 cannot infer which dependency path was selected.
 
+From perf49, finish reason 9 denotes uniform-capacity exhaustion. It retains
+the existing buffer-capacity counter/phase, while distinguishing the targeted
+uniform destination retirement from other capacity finishes (reason 3).
+With per-slot uniform storage, these FIFO submissions are deferred; the slot
+fence still protects subsequent reuse. A render-context submission still waits
+synchronously. Deferred submission does not prove that the GPU work or later
+slot backpressure vanished.
+
 Most detailed CPU phases below 50 us are filtered. Boundary, identity and
 dependency records are retained even when short. Repeated small costs can be
 investigated with the separate simpleperf/JIT diagnostic rather than treating

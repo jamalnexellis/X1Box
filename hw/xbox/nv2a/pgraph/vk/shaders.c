@@ -744,7 +744,7 @@ void pgraph_vk_update_descriptor_sets(PGRAPHState *pg)
                 pg, BUFFER_UNIFORM_STAGING, ubo_buffer_total_size,
                 r->device_props.limits.minUniformBufferOffsetAlignment)) {
             OPT_STAT_INC(buf_ubo_full);
-            pgraph_vk_finish(pg, VK_FINISH_REASON_NEED_BUFFER_SPACE);
+            pgraph_vk_finish(pg, VK_FINISH_REASON_UNIFORM_CAPACITY);
         }
 
         for (int i = 0; i < ARRAY_SIZE(layouts); i++) {
@@ -791,7 +791,8 @@ void pgraph_vk_update_descriptor_sets(PGRAPHState *pg)
     }
 
     if (need_new_descriptor_set &&
-        !(r->per_slot_draw_buffers && r->need_descriptor_rebind) &&
+        !((r->per_slot_draw_buffers || r->per_slot_uniform_buffers) &&
+          r->need_descriptor_rebind) &&
         !r->shader_bindings_changed && !r->texture_bindings_changed &&
         *ds_index_ptr > 0) {
         OPT_STAT_INC(desc_rebind_skips);

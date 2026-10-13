@@ -2299,40 +2299,11 @@ static void sync_staging_buffer(PGRAPHState *pg, VkCommandBuffer cmd,
     VkBufferCopy copy_region = { .size = b_src->buffer_offset };
     vkCmdCopyBuffer(cmd, b_src->buffer, b_dst->buffer, 1, &copy_region);
 
-    VkAccessFlags dst_access_mask;
-    VkPipelineStageFlags dst_stage_mask;
-
-    switch (index_dst) {
-    case BUFFER_INDEX:
-        dst_access_mask = VK_ACCESS_INDEX_READ_BIT |
-                          VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
-        dst_stage_mask = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
-                         VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
-        break;
-    case BUFFER_VERTEX_INLINE:
-        dst_access_mask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-        dst_stage_mask = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
-        break;
-    case BUFFER_UNIFORM:
-        dst_access_mask = VK_ACCESS_UNIFORM_READ_BIT;
-        dst_stage_mask = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
-        break;
-    default:
-        assert(0);
-        break;
-    }
-
-    VkBufferMemoryBarrier barrier = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = dst_access_mask,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .buffer = b_dst->buffer,
-        .size = b_src->buffer_offset
-    };
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, dst_stage_mask, 0,
-                         0, NULL, 1, &barrier, 0, NULL);
+    NV2AVkDrawUpload type = index_dst == BUFFER_INDEX ? NV2A_VK_UPLOAD_INDEX :
+        index_dst == BUFFER_VERTEX_INLINE ? NV2A_VK_UPLOAD_VERTEX :
+        NV2A_VK_UPLOAD_UNIFORM;
+    nv2a_vk_draw_upload_transfer_barrier(cmd, b_dst->buffer,
+                                        b_src->buffer_offset, type);
 
     b_src->buffer_offset = 0;
 }
@@ -2651,6 +2622,7 @@ const enum NV2A_PROF_COUNTERS_ENUM finish_reason_to_counter_enum[] = {
     [VK_FINISH_REASON_FLIP_STALL] = NV2A_PROF_FINISH_FLIP_STALL,
     [VK_FINISH_REASON_FLUSH] = NV2A_PROF_FINISH_FLUSH,
     [VK_FINISH_REASON_STALLED] = NV2A_PROF_FINISH_STALLED,
+    [VK_FINISH_REASON_UNIFORM_CAPACITY] = NV2A_PROF_FINISH_NEED_BUFFER_SPACE,
 };
 
 static const NV2AStallPhase finish_reason_to_stall_phase[] = {
@@ -2663,6 +2635,7 @@ static const NV2AStallPhase finish_reason_to_stall_phase[] = {
     [VK_FINISH_REASON_FLIP_STALL] = NV2A_STALL_FINISH_FLIP,
     [VK_FINISH_REASON_FLUSH] = NV2A_STALL_FINISH_FLUSH,
     [VK_FINISH_REASON_STALLED] = NV2A_STALL_FINISH_STALLED,
+    [VK_FINISH_REASON_UNIFORM_CAPACITY] = NV2A_STALL_FINISH_BUFFER_SPACE,
 };
 
 void pgraph_vk_flush_all_frames(PGRAPHState *pg)
@@ -2728,6 +2701,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
     case VK_FINISH_REASON_FLIP_STALL: OPT_STAT_INC(finish_flip); break;
     case VK_FINISH_REASON_FLUSH: OPT_STAT_INC(finish_flush); break;
     case VK_FINISH_REASON_STALLED: OPT_STAT_INC(finish_stalled); break;
+    case VK_FINISH_REASON_UNIFORM_CAPACITY: OPT_STAT_INC(finish_buf_space); break;
     }
     {
         PGRAPHVkState *r_rw = pg->vk_renderer_state;
@@ -2835,7 +2809,8 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
          */
         VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT |
                                          VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
-                                         VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+                                         VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+                                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
         VkMemoryBarrier aux_main_barrier = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -2880,8 +2855,12 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
         if (g_xemu_fast_fences || r->per_slot_draw_buffers) {
             deferred = deferred ||
                 finish_reason == VK_FINISH_REASON_NEED_BUFFER_SPACE ||
+                finish_reason == VK_FINISH_REASON_UNIFORM_CAPACITY ||
                 finish_reason == VK_FINISH_REASON_VERTEX_BUFFER_DIRTY;
         }
+        deferred = deferred ||
+            (r->per_slot_uniform_buffers &&
+             finish_reason == VK_FINISH_REASON_UNIFORM_CAPACITY);
 
         if (r->is_render_thread_context) {
             /* Render thread path: always synchronous, consume chain if

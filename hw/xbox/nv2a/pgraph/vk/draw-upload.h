@@ -25,8 +25,9 @@ static inline VkBufferUsageFlags nv2a_vk_draw_upload_usage(NV2AVkDrawUpload type
     }
 }
 
-static inline void nv2a_vk_draw_upload_barrier(VkCommandBuffer cmd,
-    VkBuffer buffer, VkDeviceSize size, NV2AVkDrawUpload type)
+static inline void nv2a_vk_draw_upload_read_barrier(VkCommandBuffer cmd,
+    VkBuffer buffer, VkDeviceSize size, NV2AVkDrawUpload type,
+    VkPipelineStageFlags source_stage, VkAccessFlags source_access)
 {
     VkPipelineStageFlags stages;
     VkAccessFlags access;
@@ -48,12 +49,26 @@ static inline void nv2a_vk_draw_upload_barrier(VkCommandBuffer cmd,
     }
     VkBufferMemoryBarrier barrier = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_HOST_WRITE_BIT, .dstAccessMask = access,
+        .srcAccessMask = source_access, .dstAccessMask = access,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .buffer = buffer, .size = size,
     };
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, stages, 0,
+    vkCmdPipelineBarrier(cmd, source_stage, stages, 0,
                          0, NULL, 1, &barrier, 0, NULL);
+}
+
+static inline void nv2a_vk_draw_upload_barrier(VkCommandBuffer cmd,
+    VkBuffer buffer, VkDeviceSize size, NV2AVkDrawUpload type)
+{
+    nv2a_vk_draw_upload_read_barrier(cmd, buffer, size, type,
+        VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_WRITE_BIT);
+}
+
+static inline void nv2a_vk_draw_upload_transfer_barrier(VkCommandBuffer cmd,
+    VkBuffer buffer, VkDeviceSize size, NV2AVkDrawUpload type)
+{
+    nv2a_vk_draw_upload_read_barrier(cmd, buffer, size, type,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 }
 #endif
